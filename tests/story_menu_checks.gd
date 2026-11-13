@@ -15,6 +15,11 @@ func _run() -> void:
 	data.version = 2
 	data.erase("act")
 	data.erase("saved_at")
+	data.erase("gathering")
+	data.erase("field_land")
+	data.chapter.sites = Chapter.ROUTES.map(func(route): return route.loads.duplicate(true))
+	data.chapter.sites[1][0].clear()
+	data.chapter.carried_load = []
 	_check(Save.write_state(legacy, data) == OK, "A previous Chapter III save is available for migration")
 	_attach_launch(legacy)
 	await _settle()

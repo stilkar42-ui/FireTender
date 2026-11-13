@@ -5,6 +5,7 @@ extends Node3D
 const TILE := 384
 const HIP := 242
 const PIXEL := 0.0020
+const CONTACT_SHADOW := preload("res://hearth/painted_contact.gdshader")
 var upper: Sprite3D
 var lower: Sprite3D
 var travel: Sprite3D
@@ -14,6 +15,17 @@ var pose := -1
 var walking := false
 
 func build(id: String) -> void:
+	var foot := MeshInstance3D.new()
+	var patch := QuadMesh.new()
+	patch.orientation = PlaneMesh.FACE_Y
+	patch.size = Vector2(0.74, 0.49)
+	var shadow := ShaderMaterial.new()
+	shadow.shader = CONTACT_SHADOW
+	foot.mesh = patch
+	foot.position.y = 0.006
+	foot.material_override = shadow
+	foot.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(foot)
 	var art := load("res://hearth/art/workers/%s.webp" % id) as Texture2D
 	upper = _painted_layer(art, 0.0)
 	lower = _painted_layer(art, 0.0)
@@ -36,7 +48,7 @@ func _painted_layer(art: Texture2D, depth: float) -> Sprite3D:
 	add_child(sprite)
 	return sprite
 
-func pose_at(camera: Camera3D, job: Dictionary, now: float, warm: float, teaching := false) -> void:
+func pose_at(camera: Camera3D, job: Dictionary, now: float, light: Color, teaching := false) -> void:
 	if upper == null or not visible:
 		return
 	walking = false
@@ -63,11 +75,11 @@ func pose_at(camera: Camera3D, job: Dictionary, now: float, warm: float, teachin
 	_set_pose(frame + (3 if rear else 0))
 	upper.flip_h = mirror
 	lower.flip_h = mirror
-	_tint(warm)
+	_tint(light)
 
-func carry_at(now: float, warm: float, direction: Vector2, camera: Camera3D) -> void:
+func carry_at(now: float, light: Color, direction: Vector2, camera: Camera3D) -> void:
 	if travel == null:
-		pose_at(camera, {}, now, warm)
+		pose_at(camera, {}, now, light)
 		return
 	walking = true
 	upper.hide()
@@ -77,7 +89,7 @@ func carry_at(now: float, warm: float, direction: Vector2, camera: Camera3D) -> 
 	travel.region_rect = Rect2(frame * TILE, 0, TILE, TILE)
 	travel.position.y = TILE * travel.pixel_size * 0.5 + 0.011 * sin(now * 13.0)
 	travel.flip_h = camera.global_basis.x.dot(Vector3(direction.x, 0, direction.y)) < 0.0
-	_tint(warm)
+	_tint(light)
 
 func _set_pose(index: int) -> void:
 	if pose == index:
@@ -90,8 +102,7 @@ func _set_pose(index: int) -> void:
 	upper.position.y = (TILE - HIP * 0.5) * PIXEL
 	lower.position.y = (TILE - HIP) * PIXEL * 0.5
 
-func _tint(warm: float) -> void:
-	var ink := Color("#95877a").lerp(Color("#e8c39b"), clampf(warm, 0.0, 1.0))
+func _tint(ink: Color) -> void:
 	upper.modulate = ink
 	lower.modulate = ink
 	if travel != null:

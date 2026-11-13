@@ -22,6 +22,13 @@ const FUEL_SCHEDULE := {
 var passed := 0
 var failed := 0
 
+static func _collected_unchanged(story: Chapter, prior: Array) -> bool:
+	for route in range(prior.size()):
+		for entry: Dictionary in prior[route].pieces:
+			if entry.state == "collected" and story.gathering.records[route].pieces[entry.id] != entry:
+				return false
+	return true
+
 func _initialize() -> void:
 	_opening_and_kin()
 	_gathering()
@@ -173,10 +180,10 @@ func _tend_chapter() -> Dictionary:
 		"all_placed": all_placed, "stock": fire.fuel_stock, "wind": story.weather.wind, "rain": story.weather.rain,
 		"ash_error": ash_error, "banked_heat": banked_heat, "banked_air": banked_air}
 	var coals := fire.coals.duplicate()
-	var supplies := story.sites.duplicate(true)
+	var supplies := story.gathering.records.duplicate(true)
 	var ash := fire.ash
 	result.continuity = (story.begin_after_storm() and story.sequel != null and fire.coals == coals and
-		story.sites == supplies and fire.ash == ash and fire.time == result.time and fire.coal_reserve() == result.coal)
+		_collected_unchanged(story, supplies) and fire.ash == ash and fire.time == result.time and fire.coal_reserve() == result.coal)
 	return result
 
 func _advance(story: Chapter, target: float) -> void:

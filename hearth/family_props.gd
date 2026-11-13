@@ -4,6 +4,7 @@ extends Node3D
 const Family := preload("res://sim/red_hollow_family.gd")
 const Work := Family.Workshop
 const Worker := preload("res://hearth/family_worker.gd")
+const Paint := preload("res://hearth/painted_material.gd")
 const GOLD := Color("#d5a66d")
 const HEIGHTS := {Work.HUNTER: 0.147, Work.COOK: 0.104, Work.MAKER: 0.19, Work.STORE: 0.145, Work.HIDE_RACK: 0.15}
 const TEACHER_AT := {
@@ -50,37 +51,44 @@ var targets: Array[Label3D] = []
 var items: Dictionary[int, Node3D] = {}
 var actors: Dictionary[String, Worker] = {}
 var camera: Camera3D
+var light_field: OmniLight3D
+var sky_fill := Color.WHITE
+var sky_energy := 0.5
 var vessel_layers: Dictionary[int, MeshInstance3D] = {}
 var animated_ids: Dictionary = {}
 var second_spit: Node3D
+var prop_meshes := {}
 var revision := -1
 var held_preview := Vector3.INF
 
 func _ready() -> void:
 	hide()
 	var cook := _area(Work.COOK, Work.COOK_AT)
-	_slab(cook, Vector3(0, 0.046, 0), Vector3(0.32, 0.065, 0.28), "#736051")
-	_slab(cook, Vector3(0, 0.105, 0.01), Vector3(0.28, 0.020, 0.25), "#9a7254")
+	_slab(cook, Vector3(0, 0.046, 0), Vector3(0.32, 0.065, 0.28), "#807266")
+	_slab(cook, Vector3(0, 0.105, 0.01), Vector3(0.28, 0.020, 0.25), "#98755a", Paint.Surface.SPLIT_WOOD)
 	var hunter := _area(Work.HUNTER, Work.HUNTER_AT)
 	_slab(hunter, Vector3(0, 0.062, 0), Vector3(0.39, 0.08, 0.34), "#6a5647")
-	_slab(hunter, Vector3(0.02, 0.139, 0), Vector3(0.36, 0.017, 0.31), "#9e7958")
+	_slab(hunter, Vector3(0.02, 0.139, 0), Vector3(0.36, 0.017, 0.31), "#a3815d", Paint.Surface.SPLIT_WOOD)
 	traces = Node3D.new()
 	hunter.add_child(traces)
-	_slab(traces, Vector3(0.04, 0.155, -0.02), Vector3(0.196, 0.002, 0.114), "#704338")
-	_slab(traces, Vector3(-0.13, 0.155, 0.10), Vector3(0.10, 0.002, 0.058), "#815041")
+	_slab(traces, Vector3(0.04, 0.155, -0.02), Vector3(0.196, 0.002, 0.114), "#704338", Paint.Surface.ORGANIC)
+	_slab(traces, Vector3(-0.13, 0.155, 0.10), Vector3(0.10, 0.002, 0.058), "#815041", Paint.Surface.ORGANIC)
 	var rack_at := Vector3(Work.RACK_AT.x, 0.035, Work.RACK_AT.y)
 	for z in [-0.22, 0.19]:
 		_beam(self, rack_at + Vector3(-0.18, 0, z), rack_at + Vector3(0.18, 0, z), 0.022, "#775940")
 	var maker := _area(Work.MAKER, Work.MAKER_AT)
-	_slab(maker, Vector3(0, 0.095, 0), Vector3(0.36, 0.11, 0.30), "#77706a")
+	_slab(maker, Vector3(0, 0.095, 0), Vector3(0.36, 0.11, 0.30), "#756e67", Paint.Surface.FLINT)
 	var stored := _area(Work.STORE, Work.STORE_AT)
 	_slab(stored, Vector3(0, 0.06, 0), Vector3(0.28, 0.074, 0.24), "#826349")
-	_slab(stored, Vector3(0, 0.139, 0), Vector3(0.25, 0.022, 0.21), "#ac8861")
+	_slab(stored, Vector3(0, 0.139, 0), Vector3(0.25, 0.022, 0.21), "#ac8861", Paint.Surface.SPLIT_WOOD)
 	var rack := _area(Work.HIDE_RACK, Work.HIDE_AT)
 	for z in [-0.17, 0.16]:
 		_beam(rack, Vector3(-0.28, 0.15, z), Vector3(0.26, 0.15, z), 0.017, "#8f6f4e")
 	for x in [-0.24, 0.23]:
 		_beam(rack, Vector3(x, 0.14, -0.2), Vector3(x, 0.14, 0.2), 0.017, "#8f6f4e")
+	for x in [-0.24, 0.23]:
+		for z in [-0.17, 0.16]:
+			_beam(rack, Vector3(x + 0.025, 0.003, z - 0.025), Vector3(x, 0.155, z), 0.018, "#826448")
 	roast = Node3D.new()
 	add_child(roast)
 	_beam(roast, Vector3(-0.17, 0.19, 0), Vector3(0.18, 0.19, 0), 0.009, "#b38657")
@@ -91,8 +99,8 @@ func _ready() -> void:
 		var spear := Node3D.new()
 		add_child(spear)
 		_beam(spear, Vector3(0, 0.025, 0.31), Vector3(0, 0.04, -0.33), 0.013, "#946949")
-		_slab(spear, Vector3(0, 0.04, -0.355), Vector3(0.034, 0.020, 0.063), "#a2a8a3")
-		_slab(spear, Vector3(0, 0.044, -0.290), Vector3(0.020, 0.013, 0.038), "#bb9573")
+		_slab(spear, Vector3(0, 0.04, -0.355), Vector3(0.034, 0.020, 0.063), "#a2a8a3", Paint.Surface.FLINT)
+		_slab(spear, Vector3(0, 0.044, -0.290), Vector3(0.020, 0.013, 0.038), "#bb9573", Paint.Surface.HIDE)
 		spears[id] = spear
 		items[-1 - i] = spear
 	for i in range(2):
@@ -132,35 +140,64 @@ func _name(words: String, at: Vector2, height: float, pixel: float) -> Label3D:
 	add_child(label)
 	return label
 
-func _material(color: String) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(color)
-	mat.roughness = 1.0
-	return mat
-
-func _slab(parent: Node3D, at: Vector3, extent: Vector3, color: String) -> MeshInstance3D:
-	var mesh := SphereMesh.new()
-	mesh.radius = 1.0
-	mesh.height = 2.0
-	mesh.radial_segments = 7
-	mesh.rings = 3
+func _slab(parent: Node3D, at: Vector3, extent: Vector3, color: String,
+		skin := Paint.Surface.STONE, profile := "") -> MeshInstance3D:
 	var prop := MeshInstance3D.new()
-	prop.mesh = mesh
-	prop.material_override = _material(color)
+	var style := skin * 7 + posmod(hash(at + extent), 7)
+	var shape := Vector2i(style, ["", "point", "vessel"].find(profile))
+	if not prop_meshes.has(shape):
+		prop_meshes[shape] = _shaped_prop(Vector3(style * 0.041, 0.0, style * 0.083), skin, profile)
+	prop.mesh = prop_meshes[shape]
+	prop.material_override = Paint.style(skin, Color(color))
 	prop.position = at
 	prop.scale = extent
 	parent.add_child(prop)
 	return prop
+
+func _shaped_prop(seed: Vector3, skin: Paint.Surface, profile: String) -> ArrayMesh:
+	var tool := SurfaceTool.new()
+	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+	const SIDES := 15
+	const LEVELS := [Vector2(0.68, -0.76), Vector2(0.93, -0.45), Vector2(1.0, 0.38), Vector2(0.79, 0.88)]
+	const BOWL := [Vector2(0.62, -0.87), Vector2(0.84, -0.40), Vector2(1.0, 0.80),
+		Vector2(0.81, 0.78), Vector2(0.60, -0.14)]
+	var rings: Array[PackedVector3Array] = []
+	for level in BOWL if profile == "vessel" else LEVELS:
+		var ring := PackedVector3Array()
+		for i in range(SIDES):
+			var angle := TAU * i / SIDES
+			var irregular := 1.0 + sin(angle * 3.0 + seed.x * 19.4) * 0.10 + cos(angle * 5.0 + seed.z * 7.2) * 0.07
+			var edge := Vector2.from_angle(angle)
+			if skin == Paint.Surface.SPLIT_WOOD:
+				edge = Vector2(signf(edge.x) * pow(absf(edge.x), 0.70), signf(edge.y) * pow(absf(edge.y), 0.66))
+			if profile == "point":
+				edge.y *= lerpf(0.38, 1.0, smoothstep(-0.88, 0.50, edge.x))
+			ring.append(Vector3(edge.x * irregular * level.x, level.y + 0.09 * sin(angle * 2.0 + seed.z), edge.y * irregular * level.x))
+		rings.append(ring)
+	for i in range(SIDES):
+		var next := (i + 1) % SIDES
+		for row in range(rings.size() - 1):
+			for point in [rings[row][i], rings[row + 1][i], rings[row][next],
+					rings[row][next], rings[row + 1][i], rings[row + 1][next]]:
+				tool.add_vertex(point)
+		var center_y := -0.22 if profile == "vessel" else 0.98
+		for point in [rings[-1][i], Vector3(0, center_y, 0), rings[-1][next],
+				rings[0][next], Vector3(0, -0.89, 0), rings[0][i]]:
+			tool.add_vertex(point)
+	tool.generate_normals()
+	return tool.commit()
 
 func _beam(parent: Node3D, from: Vector3, to: Vector3, radius: float, color: String) -> MeshInstance3D:
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = radius * 0.78
 	mesh.bottom_radius = radius
 	mesh.height = from.distance_to(to)
-	mesh.radial_segments = 5
+	mesh.radial_segments = 10
+	mesh.rings = 1
 	var beam := MeshInstance3D.new()
 	beam.mesh = mesh
-	beam.material_override = _material(color)
+	beam.material_override = Paint.style(Paint.Surface.BARK, Color(color))
+	beam.material_override.set_shader_parameter("grain_along_y", true)
 	beam.position = (from + to) / 2.0
 	beam.quaternion = Quaternion(Vector3.UP, (to - from).normalized())
 	parent.add_child(beam)
@@ -227,20 +264,33 @@ func _new_item(parcel: Work.Parcel) -> Node3D:
 	add_child(root)
 	var spec: Array = STYLES[parcel.kind]
 	var extent: Vector3 = spec[0]
-	_slab(root, Vector3(0, extent.y, 0), extent, spec[1])
+	var skin := Paint.Surface.ORGANIC
+	if parcel.kind in ["point", "flake", "scraper"]:
+		skin = Paint.Surface.FLINT
+	elif parcel.kind in ["hammer", "vessel"]:
+		skin = Paint.Surface.STONE
+	elif parcel.kind in ["shaft", "knot", "scrap"]:
+		skin = Paint.Surface.BARK
+	elif parcel.kind in ["hide", "clean_hide", "binding"]:
+		skin = Paint.Surface.HIDE
+	elif parcel.kind in ["bone", "spent_bone", "bone_shard"]:
+		skin = Paint.Surface.BONE
+	var profile: String = parcel.kind if parcel.kind in ["point", "vessel"] else ""
+	var primary := _slab(root, Vector3(0, extent.y, 0), extent, spec[1], skin, profile)
+	if parcel.kind == "knot":
+		primary.material_override.set_shader_parameter("resin", 0.8)
 	match parcel.kind:
 		"carcass":
-			_slab(root, Vector3(0.03, 0.166, 0.025), Vector3(0.182, 0.034, 0.087), "#bd755b")
-			_slab(root, Vector3(0.179, 0.105, -0.067), Vector3(0.101, 0.031, 0.035), "#cdb08c")
+			_slab(root, Vector3(0.03, 0.166, 0.025), Vector3(0.182, 0.034, 0.087), "#bd755b", Paint.Surface.ORGANIC)
+			_slab(root, Vector3(0.179, 0.105, -0.067), Vector3(0.101, 0.031, 0.035), "#cdb08c", Paint.Surface.BONE)
 		"bone", "spent_bone":
 			for end in [-1, 1]:
-				_slab(root, Vector3(extent.x * end * 0.76, extent.y, 0), extent * Vector3(0.25, 1.2, 1.65), "#d1b995")
+				_slab(root, Vector3(extent.x * end * 0.76, extent.y, 0), extent * Vector3(0.25, 1.2, 1.65), "#d1b995", Paint.Surface.BONE)
 		"bone_shard":
 			for offset in [Vector3(-0.052, 0.009, 0.030), Vector3(0.037, 0.012, -0.045)]:
-				_slab(root, offset, Vector3(0.024, 0.014, 0.023), "#d1b995")
+				_slab(root, offset, Vector3(0.024, 0.014, 0.023), "#d1b995", Paint.Surface.BONE)
 		"vessel":
-			_slab(root, Vector3(0, 0.054, 0), Vector3(0.055, 0.008, 0.046), "#443831")
-			var fill := _slab(root, Vector3(0, 0.062, 0), Vector3(0.047, 0.009, 0.038), "#b87f37")
+			var fill := _slab(root, Vector3(0, 0.050, 0), Vector3(0.047, 0.009, 0.038), "#b87f37", Paint.Surface.ORGANIC)
 			vessel_layers[parcel.id] = fill
 			fill.hide()
 			if parcel.id == model.cup_id:
@@ -267,9 +317,9 @@ func _pose_item(item: Node3D, parcel: Work.Parcel) -> void:
 		item.rotation.z = 0.0
 	item.position = Vector3(parcel.at.x, height, parcel.at.y)
 	if parcel.kind in ["meat", "marrow"]:
-		item.get_child(0).material_override.albedo_color = Color("#4c5042" if parcel.freshness <= 0.0 else FOOD_INK[parcel.condition()])
+		Paint.color(item.get_child(0).material_override, Color("#4c5042" if parcel.freshness <= 0.0 else FOOD_INK[parcel.condition()]))
 	elif parcel.prepared and parcel.kind in ["point", "shaft"]:
-		item.get_child(0).material_override.albedo_color = Color("#a7b4b0" if parcel.kind == "point" else "#b99a72")
+		Paint.color(item.get_child(0).material_override, Color("#a7b4b0" if parcel.kind == "point" else "#b99a72"))
 
 func _height(rest: String, at: Vector2) -> float:
 	if rest == Work.IN_TRANSIT:
@@ -289,8 +339,8 @@ func _update_hot_items() -> void:
 	if cup != null:
 		contents.visible = model.cup_fill != 0
 		if contents.visible:
-			contents.material_override.albedo_color = Color("#382b24" if model.resin.scorched >= 1.0 else (
-				"#d6a053" if model.resin.temperature >= 68.0 else "#ad763c"))
+			Paint.color(contents.material_override, Color("#382b24" if model.resin.scorched >= 1.0 else (
+				"#d6a053" if model.resin.temperature >= 68.0 else "#ad763c")))
 	_sync_hand()
 
 func _update_people() -> void:
@@ -316,7 +366,7 @@ func _update_people() -> void:
 			if actors.has(carrier):
 				var actor := actors[carrier]
 				actor.position = Vector3(parcel.at.x - 0.08, 0.025, parcel.at.y - 0.15)
-				actor.carry_at(model.fire.time, 0.56, (family.transfer.to - family.transfer.from).normalized(), camera)
+				actor.carry_at(model.fire.time, _cutout_light(actor.position), (family.transfer.to - family.transfer.from).normalized(), camera)
 	second_spit.visible = cook_job.get("phase") == "warming"
 	if second_spit.visible:
 		var cut := model.parcels[int(cook_job.id)]
@@ -327,7 +377,7 @@ func _update_people() -> void:
 		fill.visible = maker_job.get("phase") == "warming"
 		if fill.visible:
 			var pitch := model.parcels[int(maker_job.id)]
-			fill.material_override.albedo_color = Color("#d39b50" if pitch.temperature > 68.0 else "#a9743d")
+			Paint.color(fill.material_override, Color("#d39b50" if pitch.temperature > 68.0 else "#a9743d"))
 	_animate_work_objects()
 
 func _worker_pose(id: String, area: String, job: Dictionary) -> void:
@@ -340,11 +390,14 @@ func _worker_pose(id: String, area: String, job: Dictionary) -> void:
 	body.position = Vector3(spot.x, 0.01, spot.y)
 	if not camera.is_position_in_frustum(body.position + Vector3.UP * 0.40):
 		return
-	var light := clampf(model.fire.shelter.light * 0.48 + model.fire.heat_at(spot) * 0.84 + 0.32, 0.0, 1.0)
 	var helper: Dictionary = family.craft.helper
 	var coaching: bool = helper.get("mode") == "supervised" and helper.get("teacher") == id \
 		and model.fire.time - helper.get("began", 0.0) < 1.25
-	body.pose_at(camera, job if job.get("worker") == id else {}, model.fire.time, light, coaching)
+	body.pose_at(camera, job if job.get("worker") == id else {}, model.fire.time, _cutout_light(body.position), coaching)
+
+func _cutout_light(at: Vector3) -> Color:
+	# Billboards read the same emitted light and floor distance as the solid props.
+	return Paint.cutout_light(at + Vector3.UP * 0.30, sky_fill, sky_energy, light_field)
 
 func _animate_work_objects() -> void:
 	for id: int in animated_ids:

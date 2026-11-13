@@ -378,7 +378,7 @@ func close_work() -> void:
 	lab._update_speaker()
 
 func toggle_family(tab := 0) -> void:
-	if family == null:
+	if family == null and (tab != MAP_PAGE or not lab._after_storm()):
 		return
 	if family_panel.visible and page == tab:
 		close_family()
@@ -392,6 +392,8 @@ func toggle_family(tab := 0) -> void:
 	lab.debug.hide()
 	family_panel.show()
 	lab.view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if family == null and mind_cave.field_land != lab.chapter.land:
+		mind_cave.attach_field(lab.chapter.land)
 	_set_page(tab)
 	lab._update_speaker()
 
@@ -407,6 +409,8 @@ func close() -> void:
 
 func update() -> void:
 	if family == null:
+		if family_panel.visible and page == MAP_PAGE:
+			mind_cave.update_map()
 		return
 	if not station.is_empty():
 		if last_work_sighting != family.workshop.revision:
@@ -447,6 +451,7 @@ func update() -> void:
 func _set_page(index: int) -> void:
 	page = index
 	for i in range(page_tabs.size()):
+		page_tabs[i].visible = family != null
 		page_tabs[i].set_pressed_no_signal(i == page)
 	tree.visible = page == 0
 	detail.visible = page == 0
@@ -457,10 +462,13 @@ func _set_page(index: int) -> void:
 	heading.text = "Mind Cave" if page == MAP_PAGE else "Stone Mountain’s kin"
 	news_portrait.visible = page == 1
 	news_caption.visible = page == 1
-	news_map.visible = page == 1 and not family.latest.get("place", "").is_empty()
+	news_map.visible = family != null and page == 1 and not family.latest.get("place", "").is_empty()
 	ledger.position.y = 171 if page == 2 else 128
 	ledger.size = Vector2(985, 408) if page == 2 else (Vector2(985, 451) if page == TECH_PAGE else Vector2(726, 451))
-	_refresh_family()
+	if family != null:
+		_refresh_family()
+	else:
+		mind_cave.update_map()
 
 func _select_person(id: String) -> void:
 	person = id
@@ -484,7 +492,7 @@ func _map_from_news() -> void:
 func _focus_place(place: String, close_map: bool) -> void:
 	var at: Vector2 = Land.INSIDE[place][4]
 	lab.view.workbench.focus_on(Vector3(at.x, 0.10, at.y))
-	if close_map and Work.SURFACES.has(place):
+	if close_map and family != null and Work.SURFACES.has(place):
 		family.remember_workplace(place)
 	if close_map:
 		close_family()

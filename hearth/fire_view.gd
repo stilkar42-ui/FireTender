@@ -629,12 +629,10 @@ func _draw() -> void:
 		return
 	_speaker()
 	if torch_present and torch_art != null:
-		var warmth := clampf(fire.heat_at(Vector2(-1.40, 0.35)), 0.0, 1.0)
-		var light := 0.71 + warmth * 0.25
 		draw_set_transform(Vector2(torch_seat.get_center().x, torch_seat.end.y - 6.0), 0.0, Vector2(1.0, 0.14))
 		draw_circle(Vector2.ZERO, 45.0, Color(0.08, 0.06, 0.05, 0.43), true, -1.0, true)
 		draw_set_transform(Vector2.ZERO)
-		draw_texture_rect(torch_art, torch_seat, false, Color(light, light * 0.97, light * 0.94))
+		draw_texture_rect(torch_art, torch_seat, false, workbench.portrait_light(Vector2(-1.40, 0.35)))
 	_air_threads()
 	_draw_tool()
 	_draw_material_hint()
@@ -678,11 +676,9 @@ func _speaker() -> void:
 	if speaker_art == null:
 		return
 	var at := speaker_seat.position
-	var local := clampf(fire.heat_at(Vector2(1.18, 0.11)), 0.0, 1.0)
-	var illumination := 0.68 + local * (0.28 + sin(seconds * 7.4) * 0.028)
 	at.y -= sin(seconds * 1.65) * 0.70
 	draw_texture_rect(speaker_art, Rect2(at, speaker_seat.size), false,
-		Color(illumination, illumination * (0.98 - local * 0.06), illumination * (0.97 - local * 0.13)))
+		workbench.portrait_light(Vector2(1.18, 0.11)))
 	if speaker_talking:
 		var eye := at + speaker_seat.size * Vector2(0.556, 0.215)
 		draw_line(eye - Vector2(1.8, 0), eye + Vector2(1.8, 0.3),

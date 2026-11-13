@@ -6,14 +6,14 @@ const Chapter := preload("res://sim/red_hollow.gd")
 const Fire := Chapter.Fire
 const Work := Chapter.Family.Workshop
 const Mentor := preload("res://sim/mentor.gd")
-const VERSION := 3
+const VERSION := 4
 const MAX_BYTES := 24 * 1024 * 1024
 const FIRE_SKIP := ["wood", "stored", "coals", "sparks", "breaths", "falling", "cells", "shelter", "smoke_field",
 	"nodes", "links", "radiant_links", "fuel_stock"]
 const PIECE_SKIP := ["sections", "faces", "inner", "core", "pose"]
 const WORK_SKIP := ["fire", "parcels", "roast", "resin", "lessons", "techniques"]
 const FAMILY_SKIP := ["fire", "weather", "workshop", "rng", "land", "craft", "stormfall"]
-const CHAPTER_SKIP := ["fire", "weather", "sequel", "family"]
+const CHAPTER_SKIP := ["fire", "weather", "sequel", "family", "gathering", "land"]
 
 static func write_slot(path: String, chapter: Chapter, mentor: Mentor, view_state := {}) -> Error:
 	var state := capture(chapter, mentor)
@@ -52,7 +52,7 @@ static func read_slot(path: String) -> Dictionary:
 	if _digest(bytes) != digest:
 		return {}
 	var state: Variant = bytes_to_var(bytes)
-	if not state is Dictionary or state.get("version", -1) not in [1, 2, VERSION]:
+	if not state is Dictionary or state.get("version", -1) not in [1, 2, 3, VERSION]:
 		return {}
 	return state
 
@@ -70,6 +70,8 @@ static func capture(chapter: Chapter, mentor: Mentor = null) -> Dictionary:
 		"chapter": _plain(chapter, CHAPTER_SKIP),
 		"weather": _plain(chapter.weather),
 		"fire": _capture_fire(chapter.fire),
+		"gathering": _plain(chapter.gathering),
+		"field_land": _plain(chapter.land),
 		"mentor": {} if mentor == null else _plain(mentor, ["conversation"]),
 		"conversation": {} if mentor == null else _plain(mentor.conversation, ["chapter", "knowledge"]),
 	}
@@ -118,6 +120,14 @@ static func restore(chapter: Chapter, state: Dictionary, mentor: Mentor = null) 
 	for key: String in required:
 		if not state.get(key) is Dictionary:
 			return false
+	var legacy_gathering: bool = not state.has("gathering")
+	var original_chapter: Dictionary = state.chapter
+	if legacy_gathering:
+		state = state.duplicate()
+		state.chapter = original_chapter.duplicate()
+		state.chapter.merge({"field_reports": {}, "pickup_at": 0.0, "picked_up": false,
+			"trip_observation": {}}, true)
+		state.chapter.carried_load = PackedInt32Array()
 	if not state.chapter.has("tinder_bundle_known"):
 		state = state.duplicate()
 		state.chapter = state.chapter.duplicate()
@@ -139,6 +149,11 @@ static func restore(chapter: Chapter, state: Dictionary, mentor: Mentor = null) 
 	if not (_put(chapter, state.chapter, CHAPTER_SKIP) and _put(chapter.weather, state.weather) \
 		and _restore_fire(chapter.fire, state.fire)):
 		return false
+	if legacy_gathering:
+		if not _restore_legacy_gathering(chapter, original_chapter, saved_chapter):
+			return false
+	elif not (_put(chapter.gathering, state.get("gathering", {})) and _put(chapter.land, state.get("field_land", {}))):
+		return false
 	if missing_storm_reserve and saved_chapter == 1 and chapter.fire.time >= Chapter.Quests.RESERVE_AT:
 		chapter.storm_reserve = Chapter.Quests.storm_reserve(chapter.fire)
 	if saved_chapter >= 2:
@@ -159,11 +174,43 @@ static func restore(chapter: Chapter, state: Dictionary, mentor: Mentor = null) 
 				chapter.sequel.track(piece)
 	if saved_chapter == 3 and not _restore_family(chapter, state):
 		return false
+	if chapter.family != null:
+		if legacy_gathering:
+			chapter.land = chapter.family.land
+		else:
+			chapter.family.land = chapter.land
 	if mentor != null:
 		mentor.begin_chapter(chapter)
 		if not state.mentor.is_empty() and not (_put(mentor, state.mentor, ["conversation"]) \
 			and _put(mentor.conversation, state.conversation, ["chapter", "knowledge"])):
 			return false
+	return true
+
+static func _restore_legacy_gathering(chapter: Chapter, prior: Dictionary, saved_chapter: int) -> bool:
+	var stock: Array = prior.get("sites", [])
+	if stock.size() != Chapter.ROUTES.size():
+		return false
+	for patches in stock:
+		if not patches is Array or not patches.all(func(patch): return patch is Dictionary):
+			return false
+	chapter.gathering.initialize(Chapter.ROUTES, stock)
+	if saved_chapter >= 2:
+		# Older games already received the shelter stormfall. Translate the
+		# surviving field wood to its old delivery condition once.
+		chapter.gathering.restore_legacy_aftermath(chapter.weather.temperature, Chapter.Shelter.END)
+	if chapter.away >= 0:
+		if chapter.away >= Chapter.ROUTES.size() or not prior.get("carried_load") is Array:
+			return false
+		var selected := PackedInt32Array()
+		for key in prior.carried_load:
+			if not key is Vector2i:
+				return false
+			for piece: Dictionary in chapter.gathering.records[chapter.away].pieces:
+				if piece.patch == key.x and piece.kind == key.y and piece.state == "available" and not piece.id in selected:
+					selected.append(piece.id)
+					break
+		chapter.carried_load = selected
+		chapter.pickup_at = (chapter.fire.time + chapter.returns_at) * 0.5
 	return true
 
 static func _restore_family(chapter: Chapter, state: Dictionary) -> bool:

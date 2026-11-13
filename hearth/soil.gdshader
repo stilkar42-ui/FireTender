@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode diffuse_lambert;
+render_mode diffuse_burley, specular_disabled;
 
 varying vec2 floor_pos;
 uniform vec2 rain_film = vec2(0.0);
@@ -12,6 +12,5 @@ void vertex() {
 void fragment() {
 	float wet = rain_film.x;
 	ALBEDO = soil_color(floor_pos) * (1.0 - wet * 0.42);
-	ROUGHNESS = mix(1.0, 0.31, wet);
-	SPECULAR = 0.11 + wet * 0.38;
+	ROUGHNESS = 1.0;
 }

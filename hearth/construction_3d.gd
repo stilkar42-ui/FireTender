@@ -4,6 +4,7 @@ extends TextureRect
 
 const Fire := preload("res://sim/fire.gd")
 const FamilyProps := preload("res://hearth/family_props.gd")
+const Paint := preload("res://hearth/painted_material.gd")
 const PLUME := preload("res://hearth/plume.gdshader")
 const AirInk := preload("res://hearth/air_ink.gd")
 const SOIL := preload("res://hearth/soil.gdshader")
@@ -49,10 +50,11 @@ var beds := {}
 var plumes := {}
 var steam_views := {}
 var shell: ArrayMesh
-var wood_surface: StandardMaterial3D
 var debris: Array[RigidBody3D] = []
 var fibres: ArrayMesh
 var stone: SphereMesh
+var hearth_stone: ArrayMesh
+var ash_shape: ArrayMesh
 var coal_cluster: ArrayMesh
 var stone_faces: PackedVector3Array
 var coal_faces: PackedVector3Array
@@ -72,7 +74,7 @@ var soil: ShaderMaterial
 var smoke_views := {}
 var cave_ground: Material
 var ash_views := {}
-var ash_ink: StandardMaterial3D
+var ash_ink: ShaderMaterial
 var rain_lines: MeshInstance3D
 var rain_impacts: MeshInstance3D
 var spark_lines: MeshInstance3D
@@ -143,13 +145,14 @@ func _fit_raster() -> void:
 	camera_changed.emit()
 
 func _create_scene() -> void:
-	wood_surface = _tint(Color.WHITE, true)
 	var profile := Vector3.ONE
 	shell = _wood_mesh(profile, profile, profile, Vector3.ZERO, 0, 0, 1, 1)
 	fibres = _fibres_mesh()
 	stone = SphereMesh.new()
-	stone.radial_segments = 7
-	stone.rings = 4
+	stone.radial_segments = 13
+	stone.rings = 7
+	hearth_stone = _weathered_stone()
+	ash_shape = _ash_mound()
 	coal_cluster = _coal_mesh()
 	flame_sheet = _make_flame_sheet()
 	stone_faces = stone.get_faces()
@@ -175,13 +178,14 @@ func _create_scene() -> void:
 	daylight.light_color = Color("#d4e0e8")
 	daylight.light_energy = 0.68
 	daylight.shadow_enabled = true
+	daylight.shadow_blur = 3.0
 	daylight.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
 	daylight.directional_shadow_max_distance = 6.0
 	root.add_child(daylight)
 	lamp = OmniLight3D.new()
-	lamp.light_color = Color("#ff8c3b")
+	lamp.light_color = Color("#efad79")
 	lamp.omni_range = 1.65
-	lamp.omni_attenuation = 1.3
+	lamp.omni_attenuation = 1.18
 	root.add_child(lamp)
 
 	floor_view = BoxMesh.new()
@@ -189,6 +193,18 @@ func _create_scene() -> void:
 	soil = ShaderMaterial.new()
 	soil.shader = SOIL
 	cave_ground = scenery.ground.duplicate() if scenery.ground != null else soil
+	Paint.bind_brush(soil, "earth", 0.84, 0.34)
+	var painted_shelter_floor: bool = cave_ground is ShaderMaterial and cave_ground.shader == preload("res://hearth/valley_soil.gdshader")
+	if painted_shelter_floor:
+		Paint.bind_brush(cave_ground, "earth", 0.96, 0.34)
+	var hearth_paint := Paint.ART + "hearth-clay.png"
+	if ResourceLoader.exists(hearth_paint):
+		var paint := load(hearth_paint)
+		soil.set_shader_parameter("hearth_paint", paint)
+		soil.set_shader_parameter("has_hearth_paint", true)
+		if painted_shelter_floor:
+			cave_ground.set_shader_parameter("hearth_paint", paint)
+			cave_ground.set_shader_parameter("has_hearth_paint", true)
 	ledge = HollowExterior.ledge()
 	floor_node = _mesh(floor_view, soil)
 	floor_node.position.y = -0.088
@@ -199,9 +215,7 @@ func _create_scene() -> void:
 	# The solid backing closes the underside of the shelf at grazing angles.
 	var backing := MeshInstance3D.new()
 	backing.mesh = HollowExterior.ledge_backing()
-	var backing_ink := _tint(Color("#32261e"))
-	backing_ink.cull_mode = BaseMaterial3D.CULL_DISABLED
-	backing.material_override = backing_ink
+	backing.material_override = Paint.style(Paint.Surface.STONE, Color("#4a3d33"))
 	backing.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	ledge_stones.add_child(backing)
 	if scenery.ground_scene != null:
@@ -221,9 +235,11 @@ func _create_scene() -> void:
 	rng.seed = 4131
 	for i in range(23):
 		var angle := TAU * i / 23.0
-		var rock := _mesh(stone, _tint(Color("#635246").darkened(rng.randf_range(0.0, 0.24))))
+		var rock := _mesh(hearth_stone, Paint.style(Paint.Surface.STONE, Color("#75695d").darkened(rng.randf_range(0.0, 0.18))))
+		rock.material_override.set_shader_parameter("brush_seed", float(i) * 0.17)
 		rock.position = Vector3(cos(angle) * 1.036, 0.038, sin(angle) * 0.90)
 		rock.rotation.y = angle + rng.randf_range(-0.3, 0.3)
+		rock.rotation.x = 0.15 * sin(angle * 7.0)
 		rock.scale = Vector3(rng.randf_range(0.15, 0.22), rng.randf_range(0.085, 0.143), rng.randf_range(0.13, 0.18))
 	var gravel := MultiMesh.new()
 	gravel.transform_format = MultiMesh.TRANSFORM_3D
@@ -239,7 +255,7 @@ func _create_scene() -> void:
 		gravel.set_instance_color(i, Color("#574338").lerp(Color("#211c19"), rng.randf()))
 	var pebbles := MultiMeshInstance3D.new()
 	pebbles.multimesh = gravel
-	pebbles.material_override = _tint(Color.WHITE, true)
+	pebbles.material_override = Paint.style(Paint.Surface.STONE, Color.WHITE, true)
 	pebbles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(pebbles)
 	var spark_ink := StandardMaterial3D.new()
@@ -262,7 +278,7 @@ func _create_scene() -> void:
 	exterior.name = "AuthoredExterior"
 	cave.add_child(exterior)
 	cave.hide()
-	ash_ink = _tint(Color("#a49987"))
+	ash_ink = Paint.style(Paint.Surface.ASH, Color("#b0a393"))
 
 func reset_camera() -> void:
 	var in_shelter := fire.shelter != null
@@ -539,7 +555,7 @@ func _refresh(delta: float) -> void:
 		sources[key] = true
 		if p.kind < 0:
 			if not beds.has(key):
-				beds[key] = _mesh(stone if p.size < 0.09 else coal_cluster, _tint(Color.WHITE, true, true))
+				beds[key] = _mesh(stone if p.size < 0.09 else coal_cluster, Paint.style(Paint.Surface.CHARCOAL, Color.WHITE, true))
 			_update_bed(p, beds[key])
 			_show_steam(p, steam_sources)
 		if p.flame > 0.20:
@@ -560,7 +576,7 @@ func _refresh(delta: float) -> void:
 	_prune(steam_views, steam_sources)
 	_update_ash()
 	lamp.position = luminous
-	lamp_power = clampf(strongest * 1.05, 0.0, 2.35)
+	lamp_power = clampf(strongest * 1.15, 0.0, 1.94)
 	mood.ambient_light_energy = 0.50 if fire.weather == 3 else 0.58
 	_ambient_effects()
 
@@ -570,10 +586,16 @@ func _ambient_effects() -> void:
 		effects_clock = seconds
 	lamp.light_energy = lamp_power * (0.94 + 0.06 * sin(seconds * 9.4))
 	_update_shelter()
+	family_props.light_field = lamp
+	family_props.sky_fill = mood.ambient_light_color
+	family_props.sky_energy = mood.ambient_light_energy
 	_update_rain()
 	_update_sparks()
 	_update_smoke()
 	_update_wind()
+
+func portrait_light(at: Vector2) -> Color:
+	return Paint.cutout_light(Vector3(at.x, 0.40, at.y), mood.ambient_light_color, mood.ambient_light_energy, lamp)
 
 func _update_shelter() -> void:
 	var shelter := fire.shelter
@@ -599,11 +621,11 @@ func _update_shelter() -> void:
 		if cave.has_method("align_floor"):
 			cave.align_floor()
 		_update_camera()
-	lamp.omni_range = lerpf(2.08, 3.95, smoothstep(0.45, 2.05, lamp_power))
+	lamp.omni_range = lerpf(2.18, 4.05, smoothstep(0.32, 1.85, lamp_power))
 	var sky_light: float = shelter.sky_light()
-	mood.ambient_light_energy = 0.30 + 0.34 * sky_light * (1.0 - shelter.cloud * 0.48)
-	mood.ambient_light_color = Color("#9babbc").lerp(Color("#eed7bc"), shelter.light * (1.0 - shelter.cloud))
-	daylight.light_energy = 0.13 + 0.73 * sky_light * (1.0 - shelter.cloud * 0.72)
+	mood.ambient_light_energy = 0.22 + 0.43 * sky_light * (1.0 - shelter.cloud * 0.41)
+	mood.ambient_light_color = Color("#95a2b7").lerp(Color("#ead7c4"), shelter.light * (1.0 - shelter.cloud))
+	daylight.light_energy = 0.06 + 0.42 * sky_light * (1.0 - shelter.cloud * 0.72)
 	exterior.light_scene(shelter, fire.time, sky_light)
 
 func _update_sparks() -> void:
@@ -717,11 +739,12 @@ func _update_ash() -> void:
 	for cell: Vector2i in fire.ash_piles:
 		var node: MeshInstance3D = ash_views.get(cell)
 		if node == null:
-			node = _mesh(stone, ash_ink)
+			node = _mesh(ash_shape, ash_ink)
 			ash_views[cell] = node
 		var radius := Fire.ash_radius(fire.ash_piles[cell])
-		node.position = Vector3(cell.x * Fire.CELL, 0.004, cell.y * Fire.CELL)
-		node.scale = Vector3(radius, radius * 0.14, radius * 0.82)
+		node.position = Vector3(cell.x * Fire.CELL, 0.002, cell.y * Fire.CELL)
+		node.rotation.y = float(cell.x * 13 + cell.y * 7)
+		node.scale = Vector3(radius, radius * 0.13, radius * 0.82)
 	_prune(ash_views, fire.ash_piles)
 
 func _create_log(piece: Fire.Piece) -> void:
@@ -731,7 +754,7 @@ func _create_log(piece: Fire.Piece) -> void:
 		var shape: Mesh = fibres if is_fine else (shell if piece.sections.is_empty() else null)
 		var node := _mesh(shape, null)
 		if shape != null:
-			_wood_ink(node)
+			_wood_ink(node, piece.kind, float(piece.id % 23) * 0.38)
 		nodes.append(node)
 	logs[piece.get_instance_id()] = nodes
 	if not collisions.has(piece.get_instance_id()):
@@ -772,18 +795,25 @@ func _update_log(piece: Fire.Piece, nodes: Array) -> void:
 		if not piece.sections.is_empty():
 			_shape_log_section(piece, i, node, Vector3(thickness, thickness, sample.radius))
 		var wood_color := _wood_color(piece.kind, sample)
-		var upper := _skin(top, wood_color)
-		var lower := _skin(bottom, wood_color.darkened(0.12))
-		_finish_wood(node.get_surface_override_material(0), upper, top, 0.35)
+		_finish_wood(node.get_surface_override_material(0), wood_color, top, 0.35)
 		if node.mesh.get_surface_count() >= 2:
-			_finish_wood(node.get_surface_override_material(1), lower, bottom, 0.50)
+			_finish_wood(node.get_surface_override_material(1), wood_color.darkened(0.09), bottom, 0.50)
 		if node.mesh.get_surface_count() == 3:
-			_finish_wood(node.get_surface_override_material(2), upper.lightened(0.18), sample, 0.29)
+			_finish_wood(node.get_surface_override_material(2), wood_color.lerp(Color("#cdad81"), 0.66), sample, 0.29)
 
-func _wood_ink(node: MeshInstance3D) -> void:
+func _wood_ink(node: MeshInstance3D, kind: int, seed: float) -> void:
 	for surface in range(node.mesh.get_surface_count()):
 		if node.get_surface_override_material(surface) == null:
-			node.set_surface_override_material(surface, _tint(Color.WHITE, true, true))
+			var skin := Paint.Surface.BARK
+			if surface == 2:
+				skin = Paint.Surface.END_GRAIN
+			elif surface == 0 and kind in [2, 3, 8, 10]:
+				skin = Paint.Surface.SPLIT_WOOD
+			elif kind in Fire.RAW_TINDER or kind == Fire.TINDER_BUNDLE:
+				skin = Paint.Surface.ORGANIC
+			var material := Paint.style(skin, Color.WHITE, true)
+			material.set_shader_parameter("brush_seed", seed if surface != 2 else 0.0)
+			node.set_surface_override_material(surface, material)
 
 func _shape_log_section(piece: Fire.Piece, i: int, node: MeshInstance3D, scale: Vector3) -> void:
 	var last := piece.sections.size() - 1
@@ -804,7 +834,7 @@ func _shape_log_section(piece: Fire.Piece, i: int, node: MeshInstance3D, scale: 
 	node.set_meta("wood_profile", profile)
 	node.mesh = _wood_mesh(left / scale, center / scale, right / scale, Vector3.ONE - wear,
 		floori(section.id / 5.0), section.id % 5, start, end, piece.kind in [2, 3, 8, 10])
-	_wood_ink(node)
+	_wood_ink(node, piece.kind, float(piece.id % 23) * 0.38)
 
 func _section_profile(section: Fire.Piece) -> Vector3:
 	return Vector3(section.upper_radius, section.lower_radius, (section.upper_radius + section.lower_radius) * 0.5)
@@ -839,6 +869,9 @@ func _wood_color(kind: int, p: Fire.Piece) -> Color:
 		1: base = Color("#9d7954")
 		Fire.LEAVES: base = Color("#a67948")
 		Fire.TINDER_BUNDLE: base = Color("#cb9352")
+		11: base = base.lerp(Color("#a5754c"), 0.26)
+		12: base = base.lerp(Color("#c2b4a3"), 0.48)
+		13: base = base.lerp(Color("#797453"), 0.42)
 	return base
 
 func _face_moisture(piece: Fire.Piece) -> PackedFloat32Array:
@@ -848,11 +881,13 @@ func _face_moisture(piece: Fire.Piece) -> PackedFloat32Array:
 			values.append(snappedf(face.water / face.original, 0.025))
 	return values
 
-func _finish_wood(material: StandardMaterial3D, dry_ink: Color, face: Fire.Piece, glow: float) -> void:
+func _finish_wood(material: ShaderMaterial, dry_ink: Color, face: Fire.Piece, glow: float) -> void:
 	var wet := smoothstep(0.15, 0.65, face.water / face.original)
-	var wet_ink := dry_ink.lerp(Color("#505963"), 0.48).darkened(0.30)
-	material.roughness = lerpf(0.96, 0.34, wet)
-	_update_material(material, dry_ink.lerp(wet_ink, wet), face.glow() * glow)
+	Paint.color(material, dry_ink)
+	material.set_shader_parameter("moisture", wet)
+	material.set_shader_parameter("scorch", clampf(face.charred_wood / face.original, 0.0, 1.0))
+	material.set_shader_parameter("resin", smoothstep(0.0, 0.0016, face.resin))
+	material.set_shader_parameter("ember", face.glow() * glow)
 
 func _structure_event(kind: String, at: Vector2, mass: float, height: float, temperature: float) -> void:
 	if kind == "pop" and refresh_interval == 0.0:
@@ -879,8 +914,8 @@ func _structure_event(kind: String, at: Vector2, mass: float, height: float, tem
 	coal.mesh = stone
 	coal.scale = Vector3.ONE * radius * 2.0
 	var glow := smoothstep(345.0, 880.0, temperature)
-	coal.material_override = _tint(Color("#43312a").lerp(Color("#ec6d32"), glow), false, true)
-	_update_material(coal.material_override, coal.material_override.albedo_color, glow * 1.8)
+	coal.material_override = Paint.style(Paint.Surface.CHARCOAL, Color("#43312a").lerp(Color("#ec6d32"), glow))
+	coal.material_override.set_shader_parameter("ember", glow * 1.8)
 	chunk.add_child(coal)
 	root.add_child(chunk)
 	chunk.position = Vector3(at.x, height, at.y)
@@ -888,11 +923,9 @@ func _structure_event(kind: String, at: Vector2, mass: float, height: float, tem
 	debris.append(chunk)
 	get_tree().create_timer(0.34 + sqrt(2.0 * height / Fire.GRAVITY)).timeout.connect(chunk.queue_free)
 
-func _skin(p: Fire.Piece, base: Color) -> Color:
-	return base.lerp(Color("#2a211d"), pow(clampf(p.charred_wood / p.original, 0.0, 1.0), 0.65))
-
 func _update_bed(p: Fire.Piece, node: MeshInstance3D) -> void:
 	var ash := clampf((p.cover + p.mineral) * 25.0, 0.0, 0.9)
+	node.material_override.set_shader_parameter("ash_cover", ash)
 	var glow := p.glow() * exp(-3.5 * p.depth())
 	var amount := _coal_amount(p)
 	node.visible = amount > 0.0003
@@ -911,15 +944,16 @@ func _update_bed(p: Fire.Piece, node: MeshInstance3D) -> void:
 	color = color.lerp(Color("#ff431f"), brightening * 0.82)
 	var emission := glow * (0.72 + reaction * 0.28) + brightening * 1.45
 	if refresh_interval > 0.0 or not node.has_meta("glow_color"):
-		_update_material(node.material_override, color, emission)
+		Paint.color(node.material_override, color)
+		node.material_override.set_shader_parameter("ember", emission)
 	elif node.get_meta("glow_color") != color or node.get_meta("glow_power") != emission:
 		if node.has_meta("glow_tween"):
 			var previous: Tween = node.get_meta("glow_tween")
 			if previous.is_valid():
 				previous.kill()
 		var transition := node.create_tween().set_parallel()
-		transition.tween_property(node.material_override, "albedo_color", color, 0.20)
-		transition.tween_property(node.material_override, "emission_energy_multiplier", emission, 0.20)
+		transition.tween_property(node.material_override, "shader_parameter/ink", color, 0.20)
+		transition.tween_property(node.material_override, "shader_parameter/ember", emission, 0.20)
 		node.set_meta("glow_tween", transition)
 	node.set_meta("glow_color", color)
 	node.set_meta("glow_power", emission)
@@ -1094,22 +1128,6 @@ func _mesh(shape: Mesh, material: Material) -> MeshInstance3D:
 	root.add_child(node)
 	return node
 
-func _tint(color: Color, vertex := false, ember_light := false) -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.roughness = 0.92
-	material.vertex_color_use_as_albedo = vertex
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	if ember_light:
-		material.emission_enabled = true
-		material.emission = Color("#fa511a")
-		material.emission_energy_multiplier = 0.0
-	return material
-
-func _update_material(material: StandardMaterial3D, color: Color, glow: float) -> void:
-	material.albedo_color = color
-	material.emission_energy_multiplier = glow
-
 func _wood_mesh(left: Vector3, center: Vector3, right: Vector3, wear: Vector3,
 		seed: int, slice: int, start: int, end: int, split := false) -> ArrayMesh:
 	const HALF_SIDES := 8
@@ -1143,13 +1161,12 @@ func _wood_mesh(left: Vector3, center: Vector3, right: Vector3, wear: Vector3,
 	for band in range(2):
 		var tool := SurfaceTool.new()
 		tool.begin(Mesh.PRIMITIVE_TRIANGLES)
-		tool.set_material(wood_surface)
 		for step in range(LENGTH_STEPS):
 			for edge in range(band * HALF_SIDES, (band + 1) * HALF_SIDES):
 				var next := (edge + 1) % SIDES
 				var axial := slice + (step + 0.5) / LENGTH_STEPS
-				var shade := 0.85 + 0.09 * sin(edge * 2.3 + seed + axial * 0.8)
-				shade += 0.045 * sin(edge * 1.8 - axial * 4.3 + seed * 0.6)
+				var shade := 0.91 + 0.047 * sin(edge * 0.8 + seed + axial * 0.5)
+				shade += 0.024 * sin(edge * 1.4 - axial * 2.0 + seed * 0.6)
 				var tint := Color(shade, shade * 0.96, shade * 0.90)
 				var a := rings[step][edge]
 				var b := rings[step + 1][edge]
@@ -1163,7 +1180,6 @@ func _wood_mesh(left: Vector3, center: Vector3, right: Vector3, wear: Vector3,
 	if start > 0 or end > 0:
 		var tool := SurfaceTool.new()
 		tool.begin(Mesh.PRIMITIVE_TRIANGLES)
-		tool.set_material(wood_surface)
 		for tip in [0, LENGTH_STEPS]:
 			var style := start if tip == 0 else end
 			if style == 0:
@@ -1177,8 +1193,8 @@ func _wood_mesh(left: Vector3, center: Vector3, right: Vector3, wear: Vector3,
 				var b := ring[(edge + 1) % SIDES]
 				var inside_a := center_point.lerp(a, 0.56)
 				var inside_b := center_point.lerp(b, 0.56)
-				var grain_tint := Color("#695348") if fracture else Color("#e4c49c")
-				var seam_tint := Color("#372921") if fracture else Color("#a78660")
+				var grain_tint := Color("#9c7861") if fracture else Color("#f0d5ad")
+				var seam_tint := Color("#735448") if fracture else Color("#e2c59b")
 				_tri(tool, a, b, inside_a, grain_tint.darkened(0.09 * (edge % 3)))
 				_tri(tool, inside_a, b, inside_b, grain_tint)
 				_tri(tool, center_point, inside_a, inside_b, seam_tint)
@@ -1189,7 +1205,6 @@ func _wood_mesh(left: Vector3, center: Vector3, right: Vector3, wear: Vector3,
 func _fibres_mesh() -> ArrayMesh:
 	var tool := SurfaceTool.new()
 	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
-	tool.set_material(wood_surface)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 73013
 	for i in range(37):
@@ -1208,15 +1223,55 @@ func _coal_mesh() -> ArrayMesh:
 	for i in range(18):
 		var at := Vector3(rng.randf_range(-0.105, 0.105), -0.010, rng.randf_range(-0.089, 0.089))
 		var radius := rng.randf_range(0.011, 0.026)
-		var tip := at + Vector3(radius * 0.15, radius * 1.46, -radius * 0.12)
-		for j in range(5):
-			var p := TAU * j / 5.0
-			var q := p + TAU / 5.0
-			_tri(tool, at + Vector3(cos(p), 0, sin(p)) * radius,
-				at + Vector3(cos(q), 0, sin(q)) * radius, tip,
-				Color.WHITE.darkened(rng.randf_range(0.03, 0.44)))
+		var broken := PackedVector3Array()
+		var crown := PackedVector3Array()
+		for side in range(7):
+			var angle := TAU * side / 7.0
+			var offset := Vector3(cos(angle), 0, sin(angle)) * radius * rng.randf_range(0.72, 1.22)
+			broken.append(at + offset)
+			crown.append(at + offset * 0.64 + Vector3.UP * radius * rng.randf_range(0.48, 1.12))
+		for side in range(7):
+			var next := (side + 1) % 7
+			var pigment := Color.WHITE.darkened(rng.randf_range(0.12, 0.39))
+			_tri(tool, broken[side], crown[side], broken[next], pigment)
+			_tri(tool, broken[next], crown[side], crown[next], pigment)
+			_tri(tool, crown[side], at + Vector3.UP * radius, crown[next], pigment.lightened(0.09))
 	tool.generate_normals()
 	return tool.commit()
+
+func _weathered_stone() -> ArrayMesh:
+	var ball := SphereMesh.new()
+	ball.radial_segments = 18
+	ball.rings = 10
+	var arrays := ball.surface_get_arrays(0)
+	var points: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	for i in range(points.size()):
+		var v := points[i] * 2.0
+		var chips := sin(v.x * 6.0 + v.z * 4.0) * 0.095 + cos(v.z * 7.0 - v.y * 5.0) * 0.07
+		v *= 1.0 + chips
+		v.y = minf(0.77 + 0.10 * sin(v.z * 3.1 + v.x * 2.4), v.y)
+		points[i] = v * 0.5
+	arrays[Mesh.ARRAY_VERTEX] = points
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+func _ash_mound() -> ArrayMesh:
+	var mesh := SurfaceTool.new()
+	mesh.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for i in range(28):
+		var a := Vector2.from_angle(TAU * i / 28.0)
+		var b := Vector2.from_angle(TAU * (i + 1) / 28.0)
+		var crest := Vector3(0.08, 0.39, -0.11)
+		var edge_a := Vector3(a.x, 0.0, a.y) * (0.9 + sin(a.x * 7.3 + a.y * 6.1) * 0.13)
+		var edge_b := Vector3(b.x, 0.0, b.y) * (0.9 + sin(b.x * 7.3 + b.y * 6.1) * 0.13)
+		var mid_a := edge_a.lerp(crest, 0.55)
+		var mid_b := edge_b.lerp(crest, 0.55)
+		_tri(mesh, edge_a, mid_a, edge_b, Color.WHITE)
+		_tri(mesh, edge_b, mid_a, mid_b, Color.WHITE)
+		_tri(mesh, mid_a, crest, mid_b, Color.WHITE)
+	mesh.generate_normals()
+	return mesh.commit()
 
 func _tri(tool: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, color: Color) -> void:
 	tool.set_color(color)

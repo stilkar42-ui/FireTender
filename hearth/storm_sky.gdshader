@@ -40,9 +40,9 @@ vec3 valley_ink(vec2 paint) {
 
 void fragment() {
 	vec3 ink = valley_ink(UV);
-	if (UV.y < 0.55) {
+	if (UV.y < 0.62) {
 		vec3 direction = normalize(world_point - CAMERA_POSITION_WORLD);
-		ink = mix(overhead_ink(direction), ink, smoothstep(0.36, 0.55, UV.y));
+		ink = mix(overhead_ink(direction), ink, smoothstep(0.52, 0.62, UV.y));
 	}
 	ALBEDO = ink;
 }

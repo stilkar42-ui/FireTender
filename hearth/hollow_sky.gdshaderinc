@@ -11,6 +11,8 @@ uniform vec2 drift = vec2(0.0);
 uniform float chapter_time = 0.0;
 uniform float moon_angle = 0.92;
 
+#include "res://hearth/painted_surface.gdshaderinc"
+
 vec2 sky_grain(vec2 cell) {
 	return fract(sin(vec2(dot(cell, vec2(127.1, 311.7)), dot(cell, vec2(269.5, 183.3)))) * 43758.5453);
 }
@@ -28,6 +30,11 @@ vec3 overhead_ink(vec3 direction) {
 		texture(valley_paint, vec2(fract(around + 0.5), cloud_row)).rgb, seam);
 	painted = mix(painted, vec3(0.45, 0.50, 0.55), smoothstep(0.83, 1.50, elevation));
 	vec3 day = mix(painted, vec3(0.35, 0.45, 0.53), 0.18 + height * 0.56);
+	vec2 cloud_space = vec2(bearing * 1.55, elevation * 3.7);
+	float sweep = pigment_noise(cloud_space + vec2(drift.x * 0.14, 0.0));
+	float haze = smoothstep(0.32, 0.73, sweep * 0.73 + brush_grain(cloud_space * 1.35) * 0.27);
+	vec3 pale = mix(vec3(0.38, 0.45, 0.50), vec3(0.66, 0.67, 0.64), haze);
+	day = mix(day, pale, 0.84 + 0.11 * height);
 	day = mix(day, day * vec3(1.28, 0.83, 0.71) + vec3(0.08, 0.02, 0.0), twilight * (1.0 - height * 0.72));
 	vec3 night = mix(vec3(0.16, 0.18, 0.23), vec3(0.032, 0.047, 0.091), height) + painted * 0.035;
 	vec3 ink = mix(night, day, daylight);
@@ -86,6 +93,6 @@ vec3 overhead_ink(vec3 direction) {
 	vec3 overcast = mix(vec3(0.087, 0.105, 0.14), vec3(0.31, 0.36, 0.42), daylight);
 	ink = mix(ink, overcast, storm_light * (0.43 + height * 0.24));
 	ink = mix(ink, front.rgb * mix(vec3(0.30, 0.37, 0.51), vec3(0.79, 0.89, 1.0), daylight),
-		front.a * edge * max(gathering * 0.84, rain_band * 0.82));
+		front.a * edge * max(gathering * 0.44, rain_band * 0.70));
 	return ink;
 }

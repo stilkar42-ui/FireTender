@@ -57,8 +57,8 @@ func _continuity() -> void:
 	fire.ash = 0.037
 	original.cover = 0.008
 	var saved := [original.char_mass, original.temperature, original.cover, kept.at, wet.water, wet.sections[0].core.water]
-	story.sites[1][0][1] -= 2
-	var patches := story.sites.duplicate(true)
+	story.gathering.take(1, PackedInt32Array([0, 1]), fire.time, 0.0, 10.0)
+	var collected: Dictionary = story.gathering.records[1].pieces[0].duplicate(true)
 	var queued := story.request(1)
 	var load := story.carried_load.duplicate()
 	var return_time := story.returns_at
@@ -67,8 +67,9 @@ func _continuity() -> void:
 		fire.ash == 0.037 and fire.coals[0] == original and fire.has_fuel(wet) and fire.has_fuel(kept) and
 		[original.char_mass, original.temperature, original.cover, kept.at, wet.water, wet.sections[0].core.water] == saved,
 		"The live handoff preserves coal identity, ash, wood, water and the same clock")
-	_check(queued and story.sites == patches and story.away == 1 and story.carried_load == load and story.returns_at == return_time,
-		"Gathering depletion and an active trip carry across unchanged")
+	_check(queued and story.gathering.records[1].pieces[0] == collected and story.away == 1 and
+		story.carried_load == load and story.returns_at == return_time,
+		"Collected stock and an active trip carry across unchanged")
 
 func _locations_and_water() -> void:
 	var fire := _model()
@@ -235,7 +236,7 @@ func _resources_and_words() -> void:
 	while story.away >= 0 and fire.time < Chapter.Shelter.END + 60.0:
 		story.step()
 	_check(story.remaining(5)[2] < before[2] and fire.all_fuel().size() > wood and fire.stock_piece(13, true) != null and
-		story.route_description(1).contains("knots") and story.route_description(4).contains("drier heart"),
+		story.route_description(1).contains("haven’t checked") and story.route_description(5).contains("waterlogged"),
 		"Aftermath reports and deliveries reflect remaining patches, wet wood and actual physical stock")
 	var talk := Conversation.new()
 	talk.chapter = story
