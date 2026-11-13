@@ -1,0 +1,59 @@
+{
+  "single_turn": [
+    {"hearth":"ember", "ask":"How can I stop this glow from dying on me?", "topic":"growth", "request":"advice", "contains":["dry fibres","breath"]},
+    {"hearth":"cold", "ask":"How do we stop the hearth from dying away?", "topic":"growth", "request":"advice", "contains":["no living red","fresh coal"]},
+    {"hearth":"loaded", "ask":"Any advice for keeping this little fire going?", "topic":"growth", "request":"advice", "contains":["cold wood","lift"]},
+    {"hearth":"flame", "ask":"How do I make sure we still have a flame when I look back?", "topic":"growth", "request":"advice", "contains":["flame is holding","catch"]},
+    {"hearth":"ember", "ask":"What can I do so it doesn't die away?", "topic":"growth", "request":"advice", "contains":["dry fibres"]},
+    {"hearth":"loaded", "ask":"Am I tending this badly?", "topic":"growth", "request":"assessment", "contains":["cold wood","lift"]},
+    {"hearth":"ember", "ask":"What brought on that injury of yours?", "topic":"injury", "request":"history", "contains":["how it happened","injured leg"]},
+    {"hearth":"ember", "ask":"How'd you hurt your leg back then?", "topic":"injury", "request":"history", "contains":["how it happened","injured leg"]},
+    {"hearth":"ember", "ask":"Why are you unable to get up?", "topic":"injury", "request":"cause", "contains":["injured leg","hearth"]},
+    {"hearth":"ember", "ask":"Will your lge be all right again?", "topic":"injury", "request":"assessment", "contains":["injured leg","cannot promise"]},
+    {"hearth":"ember", "ask":"What healer could mend your wounded leg?", "topic":"injury", "request":"advice", "contains":["cannot tell you what will mend","injured leg"]},
+    {"hearth":"ember", "ask":"What is the name you were given as a child?", "topic":"identity", "request":"history", "contains":["given name","keeper"]},
+    {"hearth":"ember", "ask":"Do you remember the name of the person who taught you?", "topic":"experience", "request":"history", "contains":["teacher","passed down"]},
+    {"hearth":"ember", "ask":"Why is it our duty to hold on to the hearth?", "topic":"heritage", "request":"cause", "contains":["kin","those who came before"]},
+    {"hearth":"ember", "ask":"Would you help me learn to tend?", "topic":"apprentice", "request":"advice", "contains":["dry fibres"]},
+    {"hearth":"ember", "ask":"Will anyone else depend on me keeping this flame?", "topic":"heritage", "request":"assessment", "contains":["kin","share a hearth"]},
+    {"hearth":"ember", "ask":"Is that speck of charcol going to hold out much longer?", "topic":"coals", "request":"duration", "contains":["little red","soon"]},
+    {"hearth":"banked", "ask":"How much longer can the embers under this ash hold?", "topic":"coals", "request":"duration", "contains":["under the ash","check"]},
+    {"hearth":"cold", "ask":"Will the charcoal in this bed last much longer?", "topic":"coals", "request":"duration", "contains":["no living glow"]},
+    {"hearth":"bed", "ask":"How much time do these coals have in them?", "topic":"coals", "request":"duration", "contains":["bed of red","watch"]},
+    {"hearth":"ember", "ask":"Suppose there's no flame left later?", "topic":"revive", "request":"consequence", "contains":["if","fresh coal"]},
+    {"hearth":"cold", "ask":"And if we lose the last of the fire?", "topic":"revive", "request":"consequence", "contains":["cold","fresh coal"]},
+    {"hearth":"packed", "ask":"Could a little more breth help it?", "topic":"air", "request":"advice", "contains":["fibres lie too close","room"]},
+    {"hearth":"wet", "ask":"What's behind that whitish smkoe coming off the branch?", "topic":"smoke", "request":"cause", "contains":["pale trail","water"]},
+    {"hearth":"ember", "ask":"Would a larger piece on top take too much heat?", "topic":"load", "request":"advice", "contains":["dry fibres"]},
+    {"hearth":"bed", "ask":"Can I leave these coals tucked in until dawn?", "topic":"bank", "request":"advice", "contains":["ash"]},
+    {"hearth":"ember", "ask":"Charcoal?", "topic":"coals", "request":"explanation", "contains":["glow"]},
+    {"hearth":"ember", "ask":"What's the going price for a sack of charcoal?", "topic":"", "request":"explanation", "reply":"unknown"},
+    {"hearth":"ember", "ask":"Could you teach me how to carve a flute?", "topic":"", "request":"advice", "reply":"unknown"},
+    {"hearth":"ember", "ask":"Do the stars circle this hearth?", "topic":"", "request":"assessment", "reply":"unknown"},
+    {"hearth":"ember", "ask":"Where can I buy new logs online?", "topic":"", "request":"advice", "reply":"unknown"},
+    {"hearth":"ember", "ask":"What do you think of that thing over there?", "topic":"", "request":"assessment", "reply":"clarify"}
+  ],
+  "conversations": [
+    {"hearth":"loaded", "turns":[
+      {"ask":"What can I change so this hearth doesn't fade?", "topic":"growth", "request":"advice", "contains":["cold wood","lift"]},
+      {"ask":"Why would that make a difference?", "topic":"growth", "request":"cause", "contains":["cold wood","warmth"]},
+      {"ask":"What if I just leave it there?", "topic":"growth", "request":"consequence", "contains":["cold wood","fade"]},
+      {"ask":"Could you point out where to start?", "topic":"growth", "request":"demonstration", "contains":["heavy piece","glow"]},
+      {"action":"move_load", "ask":"Has that made things any better?", "topic":"better", "request":"assessment", "contains":["tried","more room"]},
+      {"ask":"And the charcoal underneath?", "topic":"coals", "request":"explanation", "contains":["glow"]}
+    ]},
+    {"hearth":"ember", "turns":[
+      {"ask":"What keeps you from standing at the hearth?", "topic":"injury", "request":"cause", "contains":["injured leg"]},
+      {"ask":"How did that happen to you?", "topic":"injury", "request":"history", "contains":["how it happened"]},
+      {"ask":"Do you think it will mend?", "topic":"injury", "request":"assessment", "contains":["cannot promise"]},
+      {"ask":"Could you help me learn your work?", "topic":"apprentice", "request":"advice", "contains":["dry fibres"]},
+      {"ask":"Where exactly should I start?", "topic":"apprentice", "request":"demonstration", "contains":["glow","dry fibres"]}
+    ]},
+    {"hearth":"banked", "turns":[
+      {"ask":"How can we wake this fire after its rest?", "topic":"revive", "request":"advice", "contains":["beneath the ash","brush"]},
+      {"ask":"Why would we do that?", "topic":"revive", "request":"cause", "contains":["ash","air"]},
+      {"ask":"Could you point out where to start?", "topic":"revive", "request":"demonstration", "contains":["ash","red"]},
+      {"action":"fresh_hearth", "ask":"Why would we do that?", "topic":"", "request":"cause", "reply":"clarify"}
+    ]}
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "identity": {
+    "reply": "I am your mother’s brother. I tended this hearth before my leg failed me. Now our kin call me Fire Speaker, and I can help you read what the fire is doing.",
+    "responses": {
+      "name": "I have yet to share my given name with you. Here, I am the keeper beside this hearth, and I can teach you what I know of fire.",
+      "age": "I have tended many fires. I have no count of my years to give you. There is still time for us to sit together and watch this one."
+    },
+    "facts": ["An experienced elder", "A keeper of fire knowledge"],
+    "unknown": ["Personal name", "Exact age", "Family names"]
+  },
+  "experience": {
+    "reply": "I learned by tending, watching, and listening to knowledge passed down to us. Now we watch together. Let the coal teach you patience.",
+    "responses": {
+      "name": "I have not shared the name of a teacher with you. What I can pass on is the knowledge that was passed down to us. Start by watching the glow."
+    },
+    "facts": ["Experienced in tending fire", "Shares inherited practical knowledge"],
+    "unknown": ["Named teacher", "Childhood events", "Birthplace"]
+  },
+  "injury": {
+    "reply": "My injured leg will not carry me to the hearth now. I cannot promise when it will mend. While I sit here, I can help you learn to tend for us.",
+    "responses": {
+      "history": "I have yet to tell you how it happened. My injured leg will not carry me to the hearth, so I guide you from here while you tend for us.",
+      "cause": "My injured leg will not carry me to the hearth. Come sit with me and watch the fire, then you can do the tending I cannot.",
+      "advice": "I cannot tell you what will mend my injured leg. For now, bring your questions here and let me help you tend the fire."
+    },
+    "facts": ["An injured leg prevents normal tending"],
+    "unknown": ["Cause of injury", "Recovery date", "Medical treatment", "Future recovery"]
+  },
+  "apprentice": {
+    "reply": "Your mother learned the hearth from her elders. Now I teach you. Watch the small changes. Your cousin and the rest of our kin depend on what you keep alive here.",
+    "facts": ["Teaching the apprentice to take responsibility"],
+    "unknown": ["Future story outcomes"]
+  },
+  "heritage": {
+    "reply": "We are Stone Mountain’s kin. Red Hollow is where we share a hearth. Your mother learned to keep its warmth from those who came before her. Now you carry that work.",
+    "facts": ["Stone Mountain is the remembered ancestor", "Red Hollow is the shelter", "The Fire Speaker is the apprentice’s maternal uncle", "The Torch Bearer is the child of the apprentice’s maternal aunt"],
+    "unknown": ["Full genealogy", "How the previous hearth went cold", "Circumstances of the leg injury"]
+  }
+}

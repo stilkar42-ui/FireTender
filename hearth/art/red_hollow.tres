@@ -1,0 +1,24 @@
+[gd_resource type="Resource" load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://hearth/hearth_scenery.gd" id="1"]
+[ext_resource type="PackedScene" path="res://hearth/art/red_hollow_set.tscn" id="2"]
+[ext_resource type="Texture2D" path="res://hearth/art/red-hollow-panorama.png" id="3"]
+[ext_resource type="Texture2D" path="res://hearth/art/red-hollow-midground.png" id="4"]
+[ext_resource type="Shader" path="res://hearth/valley_soil.gdshader" id="5"]
+[ext_resource type="PackedScene" path="res://hearth/art/red_hollow_outcrop.tscn" id="6"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_earth"]
+render_priority = -20
+shader = ExtResource("5")
+
+[resource]
+script = ExtResource("1")
+set_scene = ExtResource("2")
+ground_scene = ExtResource("6")
+panorama = ExtResource("3")
+foreground = ExtResource("4")
+ground = SubResource("ShaderMaterial_earth")
+exterior_scale = 1.85
+eye_bounds = AABB(-5.5, 0.03, -4.34, 10.4, 4.6, 10.85)
+focus_bounds = AABB(-2.32, 0.03, -3.82, 3.98, 1.12, 9.02)
+camera_obstacles = Array[AABB]([AABB(-7.4, -1.4, -9.45, 4.92, 9.4, 10.30), AABB(1.77, -1.4, -9.45, 5.65, 9.4, 10.30), AABB(-7.4, -1.4, -9.45, 14.8, 11.4, 4.99), AABB(-2.49, 2.26, -4.47, 4.28, 6.0, 4.53)])
