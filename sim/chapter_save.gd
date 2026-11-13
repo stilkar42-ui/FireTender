@@ -9,7 +9,10 @@ const Mentor := preload("res://sim/mentor.gd")
 const VERSION := 4
 const MAX_BYTES := 24 * 1024 * 1024
 const FIRE_SKIP := ["wood", "stored", "coals", "sparks", "breaths", "falling", "cells", "shelter", "smoke_field",
-	"nodes", "links", "radiant_links", "fuel_stock"]
+	"nodes", "links", "radiant_links", "fuel_stock",
+	"seat_cache", "support_geometry", "support_geometry_serial", "network_candidates", "network_occluders",
+	"occluder_centers", "occluder_axes", "occluder_inverse_axis", "occluder_radius",
+	"occluder_lower", "occluder_upper", "radiation_cells"]
 const PIECE_SKIP := ["sections", "faces", "inner", "core", "pose"]
 const WORK_SKIP := ["fire", "parcels", "roast", "resin", "lessons", "techniques"]
 const FAMILY_SKIP := ["fire", "weather", "workshop", "rng", "land", "craft", "stormfall"]
@@ -340,6 +343,11 @@ static func _piece(piece: Fire.Piece, indices: Dictionary) -> Dictionary:
 static func _restore_fire(fire: Fire, data: Dictionary) -> bool:
 	if not _put(fire, data, FIRE_SKIP) or not data.get("smoke") is Dictionary:
 		return false
+	fire.seat_cache.clear()
+	fire.support_geometry.clear()
+	fire.support_geometry_serial = 0
+	fire.network_candidates = 0
+	fire.network_occluders.clear()
 	var indices := {}
 	for group: String in ["wood", "stored", "coals"]:
 		var result: Variant = _parts(data.get(group), indices, 0)
