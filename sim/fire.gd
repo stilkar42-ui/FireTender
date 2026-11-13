@@ -334,6 +334,9 @@ var network_dirty := true
 var supports_dirty := false
 var wear_dirty := false
 var last_settle := -INF
+var seat_cache := {}
+var support_geometry := {}
+var support_geometry_serial := 0
 var nodes: Array[Piece] = []
 var links: Array[Link] = []
 var radiant_links: Array[Link] = []
@@ -384,6 +387,9 @@ func setup(scenario: int) -> void:
 	supports_dirty = false
 	wear_dirty = false
 	last_settle = -INF
+	seat_cache.clear()
+	support_geometry.clear()
+	support_geometry_serial = 0
 	weather = 0
 	time = 0.0
 	radiated = 0.0
@@ -1258,11 +1264,16 @@ func _settle(gravity := false, fall_step := 0.0, moved_piece: Piece = null) -> v
 		var second := _rest_order(b)
 		return a.id < b.id if first == second else first < second)
 	var below: Array[Piece] = []
+	var next_seats := {}
+	var next_geometry := {}
 	var settle_pile := storage_dirty or stored.any(_moving_fuel) or (shelter != null and wood.any(func(piece: Piece): return not in_hearth(piece.at)))
 	for piece: Piece in ordered:
 		if not settle_pile and piece in stored and piece.pose != null and not _moving_fuel(piece):
+			if seat_cache.has(piece.id):
+				next_seats[piece.id] = seat_cache[piece.id]
 			if piece.can_support:
 				below.append(piece)
+				_remember_support_geometry(piece, next_geometry)
 			continue
 		var thickness := piece.radius
 		var previous := piece.pose
@@ -1273,6 +1284,19 @@ func _settle(gravity := false, fall_step := 0.0, moved_piece: Piece = null) -> v
 		if piece.airborne:
 			# The freshly separated ends share an axis, but their rims cannot catch on each other.
 			rests = rests.filter(func(support): return support.split_family != piece.split_family)
+		var seat_inputs: Array = []
+		if shelter != null and not piece.fed and not _moving_fuel(piece):
+			# Reuse a stable seat only when every input to the fit agrees.
+			# This includes potential supports in the original order, so changes
+			# propagate upward through an entire stack in this same pass.
+			seat_inputs = _seat_inputs(piece, rests, next_geometry)
+			var cached: Array = seat_cache.get(piece.id, [])
+			if not cached.is_empty() and cached[1] == previous and cached[0] == seat_inputs:
+				next_seats[piece.id] = cached
+				if piece.can_support:
+					below.append(piece)
+					_remember_support_geometry(piece, next_geometry)
+				continue
 		piece.pose = Structure.seat(piece.at, piece.axis, piece.size, thickness, piece.lean, rests, coals, piece.precise, piece,
 			previous if piece.fed else null)
 		if piece.airborne:
@@ -1294,10 +1318,45 @@ func _settle(gravity := false, fall_step := 0.0, moved_piece: Piece = null) -> v
 		if not piece.airborne and piece.rolling and fall_step > 0.0:
 			_gravity_rest(piece, rests, ordered, fall_step)
 		_sync_seated_piece(piece)
+		if not seat_inputs.is_empty() and not _moving_fuel(piece):
+			next_seats[piece.id] = [seat_inputs, piece.pose]
 		if piece.can_support and not piece.airborne:
 			below.append(piece)
+			if shelter != null:
+				_remember_support_geometry(piece, next_geometry)
 	_apply_weight(ordered)
+	seat_cache = next_seats
+	support_geometry = next_geometry
 	storage_dirty = false
+
+func _seat_inputs(piece: Piece, rests: Array[Piece], current_geometry: Dictionary) -> Array:
+	var lower_profile: Array = [piece.lower_radius]
+	for section in piece.sections:
+		lower_profile.append([section.id, section.lower_radius, section.faces[0].id])
+	var neighbors := PackedInt32Array()
+	for support in rests:
+		neighbors.append(current_geometry[support.id][1])
+	var ground := []
+	# Samples never extend past the log's length. Coal support reaches 0.09 farther.
+	var reach := piece.size + 0.091
+	for coal in coals:
+		if not coal.carried and coal.at.distance_squared_to(piece.at) <= reach * reach:
+			ground.append([coal.id, coal.at, Structure.coal_level(coal.char_mass)])
+	return [piece.at, piece.axis, piece.size, piece.radius, piece.lean, piece.precise,
+		piece.centre_of_mass, lower_profile, neighbors, ground]
+
+func _remember_support_geometry(piece: Piece, current_geometry: Dictionary) -> void:
+	var pose := piece.pose
+	var profile := [piece.at, piece.axis, pose.height, pose.slope, pose.span,
+		piece.radius, piece.upper_radius, piece.integrity, piece.crushed]
+	for section in piece.sections:
+		profile.append([section.upper_radius, section.integrity, section.crushed])
+	var cached: Array = support_geometry.get(piece.id, [])
+	if not cached.is_empty() and cached[0] == profile:
+		current_geometry[piece.id] = cached
+		return
+	support_geometry_serial += 1
+	current_geometry[piece.id] = [profile, support_geometry_serial]
 
 func _sync_seated_piece(piece: Piece) -> void:
 	piece.height = piece.pose.height

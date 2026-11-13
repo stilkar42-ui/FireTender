@@ -1,0 +1,32 @@
+extends RefCounted
+
+static var data := {}
+static var enabled := false
+static var force_reduced := false
+
+static func begin(reduced := false) -> void:
+	data.clear()
+	force_reduced = reduced
+	enabled = true
+
+static func finish() -> Dictionary:
+	enabled = false
+	force_reduced = false
+	return data.duplicate(true)
+
+static func start() -> int:
+	return Time.get_ticks_usec()
+
+static func end(label: String, started: int) -> void:
+	add(label, Time.get_ticks_usec() - started, 1)
+
+static func count(label: String, amount: int) -> void:
+	add(label, amount, 1)
+
+static func add(label: String, value: int, calls: int) -> void:
+	if not enabled:
+		return
+	var row: Array = data.get_or_add(label, [0, 0, 0])
+	row[0] += value
+	row[1] += calls
+	row[2] = maxi(row[2], value)
