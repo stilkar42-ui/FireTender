@@ -26,7 +26,7 @@ def flatten(record):
         row[f"{key}_max"] = values["max"]
     for key, (total, calls, worst) in record.get("profile", {}).items():
         row[f"{key}_calls"] = calls
-        if key in ("candidate_pairs", "accepted_links", "settle_population"):
+        if key in ("candidate_pairs", "narrow_candidates", "accepted_links", "settle_population"):
             row[f"{key}_mean"] = total / calls if calls else 0
         else:
             row[f"{key}_total_ms"] = total / 1000

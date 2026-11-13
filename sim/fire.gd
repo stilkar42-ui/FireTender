@@ -340,6 +340,15 @@ var support_geometry_serial := 0
 var nodes: Array[Piece] = []
 var links: Array[Link] = []
 var radiant_links: Array[Link] = []
+var network_candidates := 0
+var network_occluders: Array[Piece] = []
+var occluder_centers := PackedVector3Array()
+var occluder_axes := PackedVector3Array()
+var occluder_inverse_axis := PackedFloat64Array()
+var occluder_radius := PackedFloat64Array()
+var occluder_lower := PackedVector3Array()
+var occluder_upper := PackedVector3Array()
+var radiation_cells := {}
 var crowding := PackedFloat64Array()
 var starter_ventilation := PackedFloat64Array()
 var tinder_job := {}
@@ -1293,6 +1302,10 @@ func _settle(gravity := false, fall_step := 0.0, moved_piece: Piece = null) -> v
 			var cached: Array = seat_cache.get(piece.id, [])
 			if not cached.is_empty() and cached[1] == previous and cached[0] == seat_inputs:
 				next_seats[piece.id] = cached
+				# Worn upper faces can need new thermal coordinates even when
+				# the underside fits exactly as it did before.
+				if piece in wood:
+					_sync_seated_piece(piece)
 				if piece.can_support:
 					below.append(piece)
 					_remember_support_geometry(piece, next_geometry)
@@ -1678,6 +1691,9 @@ func _prepare_network() -> void:
 		else:
 			for section in piece.sections:
 				nodes.append_array(section.faces)
+	_index_network_occluders()
+	var pair_rows := _network_pair_rows()
+	network_candidates = 0
 	links.clear()
 	radiant_links.clear()
 	crowding.fill(0.0)
@@ -1705,7 +1721,8 @@ func _prepare_network() -> void:
 				starter_ventilation[i] = _starter_passage(piece)
 	for i in range(nodes.size()):
 		var a := nodes[i]
-		for j in range(i + 1, nodes.size()):
+		network_candidates += pair_rows[i].size()
+		for j in pair_rows[i]:
 			var b := nodes[j]
 			if a.owner != 0 and a.owner == b.owner:
 				continue
@@ -1868,6 +1885,72 @@ func _prepare_network() -> void:
 		# when several nearby surfaces contribute to the crowding estimate.
 		crowding[i] *= lerpf(1.0, 0.25, starter_ventilation[i])
 
+func _network_pair_rows() -> Array[PackedInt32Array]:
+	# The broad phase uses the largest possible reach before orientation
+	# shortens it. Sort survivors by the original node index before exchange.
+	var by_x: Array[int] = []
+	var largest := 0.0
+	for i in nodes.size():
+		by_x.append(i)
+		largest = maxf(largest, nodes[i].size)
+	by_x.sort_custom(func(a, b): return nodes[a].at.x < nodes[b].at.x)
+	var rows: Array[PackedInt32Array] = []
+	rows.resize(nodes.size())
+	for left in range(by_x.size()):
+		var i := by_x[left]
+		var a := nodes[i]
+		var max_reach := maxf(0.36, a.size + largest + 0.17) + 0.00001
+		for right in range(left + 1, by_x.size()):
+			var j := by_x[right]
+			var b := nodes[j]
+			var dx := b.at.x - a.at.x
+			if dx > max_reach:
+				break
+			if (a.owner != 0 and a.owner == b.owner) or absf(a.height - b.height) > 0.83:
+				continue
+			var reach := (0.36 if a.kind < 0 and b.kind < 0 else a.size + b.size + 0.17) + 0.00001
+			if dx > reach or absf(a.at.y - b.at.y) > reach or a.at.distance_squared_to(b.at) > reach * reach:
+				continue
+			rows[mini(i, j)].append(maxi(i, j))
+	for i in rows.size():
+		rows[i].sort()
+	return rows
+
+const RADIATION_CELL := 0.25
+
+func _index_network_occluders() -> void:
+	network_occluders = wood.duplicate()
+	occluder_centers.resize(wood.size())
+	occluder_axes.resize(wood.size())
+	occluder_inverse_axis.resize(wood.size())
+	occluder_radius.resize(wood.size())
+	occluder_lower.resize(wood.size())
+	occluder_upper.resize(wood.size())
+	radiation_cells.clear()
+	for i in wood.size():
+		var piece := wood[i]
+		var center := _thermal_position(piece)
+		var axis := piece.heat_axis
+		var radius := piece.radius
+		occluder_centers[i] = center
+		occluder_axes[i] = axis
+		occluder_inverse_axis[i] = maxf(0.0001, axis.length_squared())
+		occluder_radius[i] = radius
+		# The ray tests in the network use margins up to 0.012.
+		var extent := axis.abs() + Vector3.ONE * (radius + 0.0121)
+		occluder_lower[i] = center - extent
+		occluder_upper[i] = center + extent
+		if radius < 0.025:
+			continue
+		var first := _radiation_cell(center - extent)
+		var last := _radiation_cell(center + extent)
+		for x in range(first.x, last.x + 1):
+			for y in range(first.y, last.y + 1):
+				radiation_cells.get_or_add(Vector2i(x, y), []).append(i)
+
+static func _radiation_cell(point: Vector3) -> Vector2i:
+	return Vector2i(floori(point.x / RADIATION_CELL), floori(point.z / RADIATION_CELL))
+
 func _starter_passage(piece: Piece) -> float:
 	var low_course := false
 	var high_course := false
@@ -1935,17 +2018,20 @@ func _upward_capture(source: Piece, target: Piece) -> float:
 	return (1.0 - smoothstep(0.045, 0.23, drift)) * (1.0 - smoothstep(0.26, 0.48, rise))
 
 func _fuel_ray_open(from: Vector3, to: Vector3, source: Piece, target: Piece, margin: float, minimum_radius := 0.014) -> bool:
-	var middle := from.lerp(to, 0.5)
-	var half_length := from.distance_to(to) * 0.5
-	for piece in wood:
-		if piece.fibre or piece.airborne or piece.radius < minimum_radius or piece == source or piece.id == source.owner \
+	var lower := from.min(to)
+	var upper := from.max(to)
+	for i in network_occluders.size():
+		var low := occluder_lower[i]
+		var high := occluder_upper[i]
+		if low.x > upper.x or low.y > upper.y or low.z > upper.z or high.x < lower.x or high.y < lower.y or high.z < lower.z:
+			continue
+		var piece := network_occluders[i]
+		if piece.fibre or piece.airborne or occluder_radius[i] < minimum_radius or piece == source or piece.id == source.owner \
 				or (target != null and (piece == target or piece.id == target.owner)):
 			continue
-		var axis := piece.heat_axis
-		var center := _thermal_position(piece)
-		var radius := piece.radius + margin
-		if center.distance_squared_to(middle) > pow(half_length + axis.length() + radius, 2.0):
-			continue
+		var axis := occluder_axes[i]
+		var center := occluder_centers[i]
+		var radius := occluder_radius[i] + margin
 		var points := Geometry3D.get_closest_points_between_segments(from, to, center - axis, center + axis)
 		if points[0].distance_squared_to(points[1]) < radius * radius:
 			return false
@@ -1975,13 +2061,14 @@ func _radiation_visibility(from: Vector3, to: Vector3, a: Piece, b: Piece) -> fl
 	if from.distance_squared_to(to) < 0.012:
 		return 1.0
 	var middle := from.lerp(to, 0.5)
-	for piece in wood:
-		if piece.id == a.id or piece.id == b.id or piece.id == a.owner or piece.id == b.owner or piece.radius < 0.025:
+	for i in radiation_cells.get(_radiation_cell(middle), []):
+		var piece := network_occluders[i]
+		if piece.id == a.id or piece.id == b.id or piece.id == a.owner or piece.id == b.owner:
 			continue
-		var axis := piece.heat_axis
-		var offset := middle - _thermal_position(piece)
-		var across := offset - axis * clampf(offset.dot(axis) / maxf(0.0001, axis.length_squared()), -1.0, 1.0)
-		if across.length_squared() < piece.radius * piece.radius:
+		var axis := occluder_axes[i]
+		var offset := middle - occluder_centers[i]
+		var across := offset - axis * clampf(offset.dot(axis) / occluder_inverse_axis[i], -1.0, 1.0)
+		if across.length_squared() < occluder_radius[i] * occluder_radius[i]:
 			return 0.16
 	return 1.0
 

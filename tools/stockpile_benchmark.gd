@@ -3,6 +3,7 @@ extends SceneTree
 const LabScene := preload("res://hearth/hearth.tscn")
 const Chapter := preload("res://sim/red_hollow.gd")
 const Fire := Chapter.Fire
+const MODES := ["matrix", "controls", "headless", "profile", "headless_controls", "structure", "headless_structure", "thermal_trace"]
 
 var lab
 var bench
@@ -12,6 +13,7 @@ var elapsed := 2.5
 var case_filter := ""
 var phase := "matrix"
 var diagnostic = null
+var write_trace := false
 
 func _initialize() -> void:
 	_run.call_deferred()
@@ -19,16 +21,17 @@ func _initialize() -> void:
 func _run() -> void:
 	var args := OS.get_cmdline_user_args()
 	if args.is_empty():
-		printerr("Usage: -- <jsonl output> [matrix|controls|headless|profile|headless_controls|structure|headless_structure] [seconds] [case regex]")
+		printerr("Usage: -- <jsonl output> [mode] [seconds] [case regex]. Modes: ", MODES)
 		quit(1)
 		return
 	if args.size() > 1: phase = args[1]
-	if phase not in ["matrix", "controls", "headless", "profile", "headless_controls", "structure", "headless_structure"]:
+	if phase not in MODES:
 		printerr("Unknown benchmark mode: ", phase)
 		quit(1)
 		return
 	if args.size() > 2: elapsed = maxf(0.5, args[2].to_float())
 	if args.size() > 3: case_filter = args[3]
+	write_trace = "--full-trace" in args
 	log_file = FileAccess.open(args[0], FileAccess.WRITE)
 	if log_file == null:
 		quit(1)
@@ -50,7 +53,9 @@ func _run() -> void:
 	for spec in cases:
 		if not case_filter.is_empty() and filter.search(spec.id) == null:
 			continue
-		if phase == "headless_structure":
+		if phase == "thermal_trace":
+			_thermal_trace(spec)
+		elif phase == "headless_structure":
 			_structure_trace(spec)
 		elif phase.begins_with("headless"):
 			_headless_case(spec)
@@ -60,7 +65,13 @@ func _run() -> void:
 	quit()
 
 func _build_cases() -> void:
-	if phase in ["structure", "headless_structure"]:
+	if phase == "thermal_trace":
+		_case(60, 9, 1, "coal")
+		_case(60, 9, 1, "flame", "dense")
+		_case(100, 9, 1, "scorch")
+		_case(60, 9, 1, "flame", "near")
+		_case(0, 0, 1, "ignition")
+	elif phase in ["structure", "headless_structure"]:
 		for action in ["top", "middle", "bottom", "rotation", "collapse"]:
 			_case(100, 9, 1, "flame", "dense", "support_" + action)
 	elif phase in ["matrix", "headless"]:
@@ -208,6 +219,38 @@ func _structure_trace(spec: Dictionary) -> void:
 		frames.append(_support_state(fire))
 	_write({"id": spec.id, "subject": piece.id, "structure_trace": frames})
 
+func _thermal_trace(spec: Dictionary) -> void:
+	var story := Chapter.new(Fire.new())
+	if spec.state == "ignition":
+		story.fire.setup(Fire.COLD_CABIN)
+		var leaves := story.fire.workable_tinder()
+		var bundle := story.fire.prepare_tinder_bundle(leaves[0], leaves[1])
+		story.fire.move_fuel(bundle, Vector2(0.019, 0))
+		var ember := story.fire.coals[0]
+		story.fire.lift_coal(ember)
+		story.fire.deposit_coal(ember, bundle.at)
+	else:
+		_setup(story, spec)
+	var fire := story.fire
+	var states := []
+	var peak_flame := 0.0
+	for i in range(160):
+		if spec.state == "ignition":
+			fire.step()
+		else:
+			story.step()
+		peak_flame = maxf(peak_flame, fire.total_flame())
+		if i % 4 == 0:
+			var state := [fire.time, fire.oxygen, fire.radiated, fire.absorbed, fire.evaporated_water, fire.received_water]
+			for piece in fire.nodes + fire.all_fuel():
+				state.append([piece.id, piece.temperature, piece.water, piece.wood, piece.char_mass, piece.flame, piece.gas])
+			state.append(fire.links.map(func(link): return [link.a, link.b, link.conductance, link.view_a, link.view_b, link.receive_a, link.receive_b]))
+			states.append(state)
+	var row := {"id": spec.id, "peak_flame": peak_flame, "thermal_digest": JSON.stringify(states).sha256_text()}
+	if write_trace:
+		row["thermal_trace"] = states
+	_write(row)
+
 static func _support_state(fire: Fire) -> Array:
 	var ordered := fire.all_fuel().duplicate()
 	ordered.sort_custom(func(a, b): return a.id < b.id)
@@ -347,6 +390,7 @@ static func _positive_conduction(fire: Fire) -> int:
 func _sample(fire: Fire) -> Dictionary:
 	return {"active": fire.wood.size(), "stored": fire.stored.size(), "nodes": fire.nodes.size(),
 		"pairs": fire.nodes.size() * (fire.nodes.size() - 1) / 2, "links": fire.links.size(),
+		"narrow_candidates": fire.get("network_candidates") if "network_candidates" in fire else fire.nodes.size() * (fire.nodes.size() - 1) / 2,
 		"radiant": fire.radiant_links.size(), "coal": fire.coals.size(),
 		"steam_regions": fire.thermal_sources().filter(func(p): return p.vapor > 0.000006 and p.temperature > 25.0).size(),
 		"flame": fire.total_flame(), "objects": Performance.get_monitor(Performance.OBJECT_COUNT),

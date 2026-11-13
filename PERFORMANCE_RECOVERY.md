@@ -24,3 +24,26 @@ Use the same fixture on both checkouts. The `structure` mode measures frame and 
 & $godot --path . --resolution 1920x1016 --audio-driver Dummy --script res://tools/stockpile_benchmark.gd -- "$out/structure.jsonl" structure 4
 & $godot --headless --path . --script res://tools/stockpile_benchmark.gd -- "$out/structure-trace.jsonl" headless_structure
 ```
+
+## Stage 2 · Thermal-network construction
+
+The network sorts regions along one axis and safely discards pairs outside the largest possible reach, the existing height limit, or the same-piece exclusion. Surviving pairs go through the original detailed checks in original index order. A grid bounds the small set of logs that can cover the midpoint used by the existing radiation model. Flame and airflow rays first screen whole-log bounds and keep the original segment contact test for survivors. The broad phase does not change distance limits or the link equations. Near-hearth promotion and cold storage retain their existing policy.
+
+| 1920×1016 profile, 4-second captures | 60/9 dense flame, original → recovery | 100/9 loose scorch, original → recovery | 60/9 near-fire expansion, original → recovery |
+| --- | ---: | ---: | ---: |
+| Nodes | 89 → 89 | 89 → 89 | 243 → 243 |
+| Candidate pairs sent to detailed checks | 3,916 → 617 | 3,916 → 723 | 29,403 → 7,054 |
+| Accepted exchange and radiation links | 519 → 519 | 583 → 583 | 6,656 → 6,656 |
+| Builds / fixed steps | 3 / 16 → 3 / 16 | 3 / 16 → 3 / 16 | 3 / 11 → 3 / 13 |
+| Builds per wall second | 0.75 → 0.75 | 0.75 → 0.75 | 0.68 → 0.75 |
+| Mean network construction | 23.9 → 17.4 ms | 28.2 → 19.0 ms | 574.6 → 273.1 ms |
+| Mean inclusive simulation step | 23.4 → 17.2 ms | 28.6 → 22.9 ms | 201.1 → 106.3 ms |
+| Maximum inclusive simulation step | 55.7 → 29.0 ms | 67.9 → 44.8 ms | 618.9 → 318.5 ms |
+| Mean scoped visibility work per build | 7.2 → 1.2 ms | 8.4 → 1.5 ms | 268.1 → 47.1 ms |
+| Worst rendered frame | 79 → 46 ms | 96 → 67 ms | 668 → 366 ms |
+
+`thermal_trace` replayed 160 quarter-second steps from five matching fixtures and compared temperatures, moisture, combustible mass, flame, radiation, oxygen, link coefficients and link order once per simulated second. All five output hashes matched exactly. The coal control stayed unlit and the cold cabin ignited from a hand-placed ember in a prepared tinder bundle, reaching 14.05 kW in both builds. An intermediate cache version reused a valid seat while leaving worn upper-face coordinates stale. The final version refreshes active thermal coordinates on cache hits, restoring the exact flame and scorch traces.
+
+## Woodpile baseline failures
+
+The five failures reproduced before any source changes. Chapter I has 25 opening pieces, including four leaves for the tinder-bundle lesson. The existing test counted the earlier 21. That stale total also appeared at departure and as an assumed total of 29 after the eight-piece ridge trip, including in both material-preservation assertions. Phase 3.3 continues to deliver eight pieces in that route and now records individual field IDs at pickup. The revised assertions verify the seven opening stock types, unchanged shelter and field counts at departure, the field debit at pickup, eight distinct delivered pieces, and the original identity and material checks on placement and return.
