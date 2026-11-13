@@ -3,7 +3,8 @@ extends SceneTree
 const LabScene := preload("res://hearth/hearth.tscn")
 const Chapter := preload("res://sim/red_hollow.gd")
 const Fire := Chapter.Fire
-const MODES := ["matrix", "controls", "headless", "profile", "headless_controls", "structure", "headless_structure", "thermal_trace"]
+const MODES := ["matrix", "controls", "headless", "profile", "headless_controls", "structure", "headless_structure",
+	"thermal_trace", "regression"]
 
 var lab
 var bench
@@ -50,9 +51,11 @@ func _run() -> void:
 	if filter.compile(case_filter) != OK:
 		quit(1)
 		return
+	var selected := 0
 	for spec in cases:
 		if not case_filter.is_empty() and filter.search(spec.id) == null:
 			continue
+		selected += 1
 		if phase == "thermal_trace":
 			_thermal_trace(spec)
 		elif phase == "headless_structure":
@@ -62,7 +65,9 @@ func _run() -> void:
 		else:
 			await _rendered_case(spec)
 	log_file.close()
-	quit()
+	if selected == 0:
+		printerr("No benchmark case matched: ", case_filter)
+	quit(0 if selected > 0 else 1)
 
 func _build_cases() -> void:
 	if phase == "thermal_trace":
@@ -74,6 +79,14 @@ func _build_cases() -> void:
 	elif phase in ["structure", "headless_structure"]:
 		for action in ["top", "middle", "bottom", "rotation", "collapse"]:
 			_case(100, 9, 1, "flame", "dense", "support_" + action)
+	elif phase == "regression":
+		_case(20, 6, 1, "coal")
+		_case(100, 9, 1, "scorch")
+		_case(100, 9, 1, "flame", "dense", "move")
+		_case(100, 9, 1, "flame", "dense", "support_collapse")
+		_case(60, 9, 1, "flame", "near")
+		for speed in [16, 64]:
+			_case(60, 9, speed, "flame", "dense")
 	elif phase in ["matrix", "headless"]:
 		for speed in [1, 16, 64] if phase == "matrix" else [1]:
 			for stock in [0, 20, 40, 60, 100]:
@@ -346,6 +359,10 @@ func _rendered_case(spec: Dictionary) -> void:
 			snapshots.append(reading)
 	var phase_detail: Dictionary = {} if diagnostic == null else diagnostic.finish()
 	var wall := (last_frame - start) / 1e6
+	if spec.mode.begins_with("support_"):
+		assert(action_count == 1, "The support replay must perform its action")
+		if spec.mode == "support_collapse":
+			assert(peak_airborne > 0, "The collapse fixture must release supported wood")
 	var result := spec.duplicate()
 	result.merge({"wall_s": wall, "sim_s": fire.time - start_time, "raster": str(bench.stage.size),
 		"end_positive_conduction": _positive_conduction(fire),

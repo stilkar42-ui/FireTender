@@ -1,5 +1,7 @@
 # Firetender · Phase 3.3.1 performance investigation
 
+The support and thermal changes are measured in [Phase 3.3.2 performance recovery](PERFORMANCE_RECOVERY.md). This report records the original baseline.
+
 ## Build and hardware
 
 Gameplay baseline `ff8f3c7fddc7c31574a06fecc52725402468ac85`, including the painted world and persistent gathering. The earlier comparison uses `398c5571cec969721174955112188044540a16f7`. The benchmark and probes are development tools. The production simulation, schedules, scenes, and shaders were left untouched.
