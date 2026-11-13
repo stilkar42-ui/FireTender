@@ -74,14 +74,14 @@ func _continue_journey() -> void:
 	var fire: Fire = lab.fire
 	var bed := fire.coals.duplicate()
 	var fuel := fire.all_fuel()
-	var stores := story.sites.duplicate(true)
+	var stores := story.gathering.records.duplicate(true)
 	lab._update_chapter()
 	_check(lab.story_menu.mode == "results" and lab.story_menu.supply_rows[0].text.contains("Living charcoal"),
 		"Chapter I automatically opens the results and supply inventory")
 	await _capture("chapter-i-results")
 	lab.story_menu.results_continue.pressed.emit()
 	var sequel := story.sequel
-	_check(sequel != null and fire.coals == bed and story.sites == stores and
+	_check(sequel != null and fire.coals == bed and Opening._collected_unchanged(story, stores) and
 		fuel.all(func(piece): return fire.has_fuel(piece)) and fire.time == Chapter.Shelter.END,
 		"The regular Continue button carries the bed, fuel, gathering sites, and clock into Chapter II")
 	if sequel == null:
@@ -183,14 +183,14 @@ func _continue_journey() -> void:
 		return
 	bed = fire.coals.duplicate()
 	fuel = fire.all_fuel()
-	stores = story.sites.duplicate(true)
+	stores = story.gathering.records.duplicate(true)
 	var crossing := fire.time
 	lab._update_chapter()
 	_check(lab.story_menu.mode == "results" and lab.story_menu.supply_rows[5].text.contains("Seasoned wood"),
 		"Chapter II automatically shows the drying result and seasoned reserve")
 	await _capture("chapter-ii-results")
 	lab.story_menu.results_continue.pressed.emit()
-	_check(story.family != null and fire.coals == bed and story.sites == stores
+	_check(story.family != null and fire.coals == bed and story.gathering.records == stores
 		and fire.time == crossing and fuel.all(func(piece): return fire.has_fuel(piece)),
 		"The regular Chapter III handoff keeps the same hearth, stores and clock")
 	if story.family == null:

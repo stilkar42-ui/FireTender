@@ -40,6 +40,32 @@ func _run() -> void:
 		not lab.speech.get_global_rect().intersects(lab.fuel_bar.get_global_rect()) and
 		lab.speech_text.get_minimum_size().y <= lab.speech_text.size.y and lab.speech_text.text.contains("Watch for scorching"),
 		"The opening drying lesson fits the Fire Speaker overlay")
+	var land := Chapter.Family.Land
+	_key(KEY_F10)
+	await process_frame
+	var map = lab.family_page.mind_cave
+	map.show_place(land.WOODS)
+	_check(lab.family_page.family_panel.visible and map.place_buttons[land.WOODS].event_mark.is_empty(),
+		"F10 opens the Chapter II Mind Cave with the unvisited birch unmarked")
+	lab.family_page.close_family()
+	_key(KEY_F6)
+	await process_frame
+	lab.torch_site.select(4)
+	lab.torch_priority.select(6)
+	lab._update_torch()
+	_check(lab.torch_send.text == "Ask him to survey" and lab.torch_detail.text.contains("haven’t checked"),
+		"The Torch Bearer panel offers a survey and keeps the site unknown")
+	lab.torch_send.pressed.emit()
+	# The clock changes while paused only through the same story ticks as a normal trip.
+	while lab.chapter.away >= 0 and lab.chapter.outcome.is_empty():
+		lab._step_budgeted(1)
+	_key(KEY_F10)
+	await process_frame
+	map.show_place(land.WOODS)
+	_check(map.place_buttons[land.WOODS].event_mark == "wood" and map.notes.get_child_count() >= 5,
+		"The returning survey adds the fuel report to the live Mind Cave")
+	await _capture("reported-birch")
+	lab.family_page.close_family()
 	await _capture("opening")
 	lab._switch_fuel_group(5)
 	var wet := fire.stock_piece(12, true)

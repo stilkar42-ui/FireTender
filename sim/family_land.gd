@@ -16,12 +16,12 @@ const FADING_AFTER := 105.0
 const TERRITORY := {
 	HOME: [Vector2(309, 201), "shelter", "Red Hollow", "Stone Mountain’s kin keep their fire under this limestone lip."],
 	SHELF: [Vector2(208, 280), "ridge", "Rocky shelf", "The bark ledge shelters loose fibres. The sky path looks out over the valley."],
-	PINE: [Vector2(131, 117), "wood", "Fallen pine", "The fallen pine lies in the lee. Branches and sticky knots can be found here."],
+	PINE: [Vector2(131, 117), "wood", "Fallen pine", "The old pine lies in the lee of the slope."],
 	WOODS: [Vector2(110, 205), "wood", "Sheltered woodland", "Standing dead birch breaks up the cover. Hunters look for hare here."],
 	STREAM: [Vector2(315, 314), "water", "Stream", "Willows bend over the water. Tavi knows where to wash edible roots."],
 	TRAIL: [Vector2(471, 208), "tracks", "Deer trail", "A worn path crosses the slope within sight of the rocky shelf."],
 	MEADOW: [Vector2(494, 119), "animal", "Open grazing ground", "Deer may move across the open ground between the trail and the ridge."],
-	RIDGE: [Vector2(311, 79), "ridge", "Far oak ridge", "The long climb reaches heavy oak splits. Rain and poor light make the way back harder."],
+	RIDGE: [Vector2(311, 79), "ridge", "Far oak ridge", "The long climb leads to the oaks. Rain and poor light make the way back harder."],
 }
 const INSIDE := {
 	HOME: [Vector2(305, 320), "shelter", "Family shelter", "Kin gather under the limestone lip, where the paths meet the shelter.", Vector2(0, 1.1)],

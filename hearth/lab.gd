@@ -39,7 +39,7 @@ const FUEL_GROUPS := [
 	["Medium", [8, 11, 12, 13]], ["Large", [9, 2, 10]], ["Waterlogged", [3]],
 ]
 const FUEL_KEYS := ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "U", "J", "K", ",", "."]
-const WET_KINDS := [2, 8, 11, 12, 13]
+const WET_KINDS := [2, 8, 11, 12, 13, 9, 10]
 const SHELTER_AREAS := ["Hearth", "Dry shelf · back left", "Tinder alcove · left", "Warming edge", "Seep · back right", "Air passage · right"]
 const AREA_FOCUS := [Vector2.ZERO, Vector2(-1.89, -3.21), Vector2(-1.94, -2.28), Vector2(-1.02, -0.20),
 	Chapter.Shelter.SEEP, Chapter.Shelter.PASSAGE]
@@ -633,7 +633,7 @@ func _fuel_bar() -> void:
 			fuel_buttons[kind] = button
 	for slot in range(WET_KINDS.size()):
 		var kind: int = WET_KINDS[slot]
-		var button := _fuel_button(bar, kind, Rect2(12 + slot * 134, 68, 129, 46), 1)
+		var button := _fuel_button(bar, kind, Rect2(12 + slot * 96, 68, 93, 46), 1)
 		button.toggle_mode = true
 		wet_buttons[kind] = button
 	_button(bar, "All fuel  [M]", Rect2(687, 33, 125, 28), _toggle_palette)
@@ -704,7 +704,7 @@ func _fuel_palette() -> void:
 			fuel_tray_buttons.append(button)
 	for slot in range(WET_KINDS.size()):
 		var kind: int = WET_KINDS[slot]
-		var button := _fuel_button(palette, kind, Rect2(529, 282 + slot * 39, 238, 36), 1)
+		var button := _fuel_button(palette, kind, Rect2(529, 282 + slot * 28, 238, 26), 1)
 		button.hide()
 		wet_tray_buttons[kind] = button
 	palette.hide()
@@ -1606,23 +1606,23 @@ func _chapter_ui() -> void:
 	chapter_note.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	chapter_ash = _label(chapter_controls, "", Rect2(0, 150, 253, 21), 13, MUTED)
 	chapter_controls.hide()
-	torch_panel = _panel(Rect2(-246, -175, 492, 350), CENTER)
+	torch_panel = _panel(Rect2(-246, -190, 492, 380), CENTER)
 	_label(torch_panel, "Torch Bearer", Rect2(20, 10, 295, 32), 21, GOLD, serif)
 	_button(torch_panel, "Close", Rect2(391, 12, 81, 29), _toggle_torch)
-	torch_report = _label(torch_panel, "", Rect2(20, 47, 452, 80), 16, TEXT, serif)
+	torch_report = _label(torch_panel, "", Rect2(20, 47, 452, 98), 16, TEXT, serif)
 	torch_report.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	torch_report.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	torch_site = _picker(torch_panel, Rect2(20, 134, 452, 32), func(_index: int) -> void: _update_torch())
+	torch_site = _picker(torch_panel, Rect2(20, 151, 452, 32), func(_index: int) -> void: _update_torch())
 	for route: Dictionary in Chapter.ROUTES:
 		torch_site.add_item(route.place)
-	torch_detail = _label(torch_panel, "", Rect2(20, 175, 452, 76), 15, TEXT, serif)
+	torch_detail = _label(torch_panel, "", Rect2(20, 193, 452, 86), 15, TEXT, serif)
 	torch_detail.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	torch_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	torch_priority = _picker(torch_panel, Rect2(20, 266, 244, 32), func(_index: int) -> void: _update_torch())
-	for priority in Chapter.PRIORITIES:
+	torch_priority = _picker(torch_panel, Rect2(20, 289, 244, 32), func(_index: int) -> void: _update_torch())
+	for priority in Chapter.PRIORITIES.slice(0, 4):
 		torch_priority.add_item(priority)
-	torch_send = _button(torch_panel, "Ask him to go", Rect2(274, 266, 198, 32), _request_trip)
-	torch_status = _label(torch_panel, "", Rect2(20, 307, 452, 26), 13, MUTED)
+	torch_send = _button(torch_panel, "Ask him to go", Rect2(274, 289, 198, 32), _request_trip)
+	torch_status = _label(torch_panel, "", Rect2(20, 331, 452, 26), 13, MUTED)
 	torch_panel.hide()
 	_build_quest_journal()
 
@@ -1845,6 +1845,7 @@ func _open_family() -> void:
 	family_button.show()
 	family_news_button.show()
 	mind_cave_button.show()
+	mind_cave_button.position = Vector2(122, 99)
 	family_news_seen = chapter.family.news_revision
 	_update_chapter()
 	_update_speaker()
@@ -2073,8 +2074,8 @@ func _fuel_supply(button: Button, kind: int, stock: PackedInt32Array) -> void:
 
 func _wet_supply(button: Button, kind: int, piece: Fire.Piece) -> void:
 	button.disabled = piece == null
-	var wood_name: String = "branch" if kind == 8 else Fire.Materials.PROFILES[Fire.FUEL_MATERIAL[kind]].name.to_lower()
-	button.text = "Wet %s  [%s]" % [wood_name, FUEL_KEYS[kind]]
+	var wood_name: String = {8: "branch", 9: "thick", 10: "split"}.get(kind, Fire.Materials.PROFILES[Fire.FUEL_MATERIAL[kind]].name.to_lower())
+	button.text = "%s [%s]" % [wood_name.capitalize(), FUEL_KEYS[kind]]
 	var size := "Large log" if Chapter.Quests.size_group(kind) == 3 else "Medium log"
 	button.tooltip_text = "%s · %s" % [size, _wood_condition(piece)] if piece != null else "No wet piece of this species in storage."
 
@@ -2101,6 +2102,13 @@ func _close_torch() -> void:
 		view.mouse_filter = Control.MOUSE_FILTER_STOP
 
 func _update_torch() -> void:
+	var wanted := Chapter.PRIORITIES.size() if _after_storm() else 4
+	if torch_priority.item_count != wanted:
+		var index := clampi(torch_priority.selected, 0, wanted - 1)
+		torch_priority.clear()
+		for priority in Chapter.PRIORITIES.slice(0, wanted):
+			torch_priority.add_item(priority)
+		torch_priority.select(index)
 	torch_report.text = chapter.report
 	if _living_family() and chapter.away < 0:
 		for i in range(chapter.family.news.size() - 1, -1, -1):
@@ -2117,7 +2125,8 @@ func _update_torch() -> void:
 		torch_report.text += "\nBack in about %d sec of hearth time." % maxi(0, ceili(chapter.returns_at - fire.time))
 	var route := torch_site.selected
 	var priority := torch_priority.selected
-	torch_detail.text = "%s %s" % [chapter.route_description(route), chapter.remaining_words(route)]
+	torch_detail.text = (chapter.route_description(route) + " " + chapter.remaining_words(route)).strip_edges()
+	torch_send.text = "Ask him to survey" if priority == 6 and route != Chapter.SCOUT else "Ask him to go"
 	torch_status.text = chapter.route_status(route, priority)
 	torch_priority.disabled = route == Chapter.SCOUT
 	torch_send.disabled = not chapter.can_request(route, priority)
@@ -2135,6 +2144,9 @@ func _update_chapter() -> void:
 	if chapter == null:
 		return
 	quest_button.visible = not _living_family()
+	if not _living_family():
+		mind_cave_button.visible = _after_storm()
+		mind_cave_button.position = Vector2(112, 99)
 	if quest_panel.visible:
 		_refresh_quests()
 	view.torch_present = chapter.away < 0
@@ -2152,6 +2164,8 @@ func _update_chapter() -> void:
 			family_news_button.tooltip_text = chapter.family.latest.text
 	chapter_note.text = chapter.objective()
 	chapter_note.visible = chapter.outcome.is_empty() and not _living_family()
+	chapter_note.position.y = 103 if not _after_storm() else 135
+	chapter_ash.visible = not _after_storm() or (_living_family() and chapter.family.craft.heat_needs.is_empty())
 	chapter_weather.text = chapter.weather.weather_words() + "\n" + chapter.weather.local_words()
 	chapter_weather.tooltip_text = chapter.weather.day_words(fire.time)
 	chapter_ash.text = "Loose ash ready to sift" if fire.ash >= 0.001 else "Sweep ash when fuel burns down"

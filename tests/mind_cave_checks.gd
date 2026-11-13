@@ -34,7 +34,7 @@ func _initialize() -> void:
 		"A witnessed return clears the travel trace")
 	var remembered: Dictionary = report.duplicate(true)
 	family.sites[Land.PINE].knots = 0
-	chapter.sites[1].clear()
+	chapter.gathering.take(1, chapter.gathering.plan(1, 0, true), chapter.fire.time, 0.0, 10.0)
 	_check(map.places[Land.PINE] == remembered, "Unseen depletion leaves the prior report intact")
 	_check(not Land.stale(report.weather.seen, chapter.fire.time) and
 		Land.stale(report.weather.seen, report.weather.seen + Land.FADING_AFTER),

@@ -151,6 +151,7 @@ class KinMark extends Button:
 
 var lab: Control
 var family: Family
+var field_land: Land
 var inside := false
 var chosen := Land.HOME
 var chart: Stone
@@ -206,16 +207,25 @@ func build(scene: Control) -> void:
 
 func attach(model: Family) -> void:
 	family = model
+	field_land = null if model == null else model.land
+	_reset_chart()
+
+func attach_field(ledger: Land) -> void:
+	family = null
+	field_land = ledger
+	_reset_chart()
+
+func _reset_chart() -> void:
 	inside = false
 	chosen = Land.HOME
 	person_highlight = ""
 	revision = Vector2i(-1, -1)
 	next_fade = INF
-	if family != null:
+	if field_land != null:
 		_rebuild_chart()
 
 func show_place(place: String, id := "") -> void:
-	if family == null:
+	if field_land == null:
 		return
 	person_highlight = id
 	var interior_place := Land.INSIDE.has(place) and place != Land.HOME
@@ -237,10 +247,15 @@ func _linked_place(id: String) -> String:
 	return "Hearth" if id == Roster.APPRENTICE else family.known[id].place
 
 func _places() -> Dictionary:
-	return Land.INSIDE if inside else Land.TERRITORY
+	if not inside or family != null:
+		return Land.INSIDE if inside else Land.TERRITORY
+	var shelter := Land.INSIDE.duplicate()
+	for place in Family.Workshop.STATIONS.keys() + [Family.Workshop.STORE, Family.Workshop.HIDE_RACK]:
+		shelter.erase(place)
+	return shelter
 
 func _switch_chart(show_inside: bool) -> void:
-	if family == null:
+	if field_land == null:
 		return
 	if inside != show_inside:
 		inside = show_inside
@@ -318,6 +333,8 @@ func _person_place(id: String, seen: Dictionary) -> String:
 
 func _index_people() -> void:
 	related.clear()
+	if family == null:
+		return
 	for id: String in family.known:
 		var seen: Dictionary = family.known[id]
 		var here := _person_place(id, seen)
@@ -334,38 +351,39 @@ func _add_kin(place: String, id: String, travelling: bool) -> void:
 
 func _person_uncertain(entry: Dictionary) -> bool:
 	var seen: Dictionary = family.known[entry.id]
-	return entry.id != Roster.APPRENTICE and (entry.travelling or seen.away or Land.stale(seen.seen, family.fire.time))
+	return entry.id != Roster.APPRENTICE and (entry.travelling or seen.away or Land.stale(seen.seen, lab.fire.time))
 
 func update_map() -> void:
-	if family == null:
+	if field_land == null:
 		return
-	var current := Vector2i(family.land.revision, family.knowledge_revision)
+	var current := Vector2i(field_land.revision, 0 if family == null else family.knowledge_revision)
 	if revision.y != current.y and not person_highlight.is_empty():
 		var place := _linked_place(person_highlight)
 		if place != chosen:
 			mark_person(person_highlight)
 			return
-	if revision != current or family.fire.time >= next_fade:
+	if revision != current or lab.fire.time >= next_fade:
 		_refresh()
 
 func _schedule_fade() -> void:
 	# Reports age even if no new observation arrives.
 	next_fade = INF
-	for seen in family.known.values():
-		_include_fade(seen.seen)
-	for entries in family.land.places.values():
+	if family != null:
+		for seen in family.known.values():
+			_include_fade(seen.seen)
+	for entries in field_land.places.values():
 		for note in entries.values():
 			_include_fade(note.seen)
 
 func _include_fade(seen: float) -> void:
 	var expires := seen + Land.FADING_AFTER
-	if expires > family.fire.time:
+	if expires > lab.fire.time:
 		next_fade = minf(next_fade, expires)
 
 func _refresh(reset_scroll := false) -> void:
-	if family == null:
+	if field_land == null:
 		return
-	revision = Vector2i(family.land.revision, family.knowledge_revision)
+	revision = Vector2i(field_land.revision, 0 if family == null else family.knowledge_revision)
 	_schedule_fade()
 	_index_people()
 	for i in range(area_tabs.size()):
@@ -375,14 +393,14 @@ func _refresh(reset_scroll := false) -> void:
 	chart.queue_redraw()
 	for place: String in place_buttons:
 		var mark := place_buttons[place]
-		var weather: Dictionary = family.land.places.get(place, {}).get("weather", {})
-		var reports: Dictionary = family.land.places.get(place, {})
-		var event: Dictionary = reports.get("concern", reports.get("sign", reports.get("fuel", reports.get("finding", {}))))
+		var weather: Dictionary = field_land.places.get(place, {}).get("weather", {})
+		var reports: Dictionary = field_land.places.get(place, {})
+		var event: Dictionary = reports.get("concern", reports.get("path", reports.get("sign", reports.get("fuel", reports.get("finding", {})))))
 		mark.selected = place == chosen
 		mark.weather = weather.get("mark", "")
-		mark.weather_old = not weather.is_empty() and Land.stale(weather.seen, family.fire.time)
+		mark.weather_old = not weather.is_empty() and Land.stale(weather.seen, lab.fire.time)
 		mark.event_mark = event.get("mark", "")
-		mark.event_old = not event.is_empty() and Land.stale(event.seen, family.fire.time)
+		mark.event_old = not event.is_empty() and Land.stale(event.seen, lab.fire.time)
 		mark.queue_redraw()
 		var kin := kin_buttons[place]
 		var members: Array = related.get(place, [])
@@ -397,7 +415,7 @@ func _refresh(reset_scroll := false) -> void:
 	_write_notes(reset_scroll)
 
 func _known_route() -> String:
-	if inside:
+	if inside or family == null:
 		return ""
 	if not person_highlight.is_empty():
 		return family.known[person_highlight].get("destination", "")
@@ -419,7 +437,7 @@ func _write_notes(reset_scroll: bool) -> void:
 	var spec: Array = _places()[chosen]
 	_add_words(spec[2] if inside else chosen, 24, lab.GOLD)
 	_add_words(spec[3], 16, lab.TEXT)
-	var reports: Dictionary = family.land.places.get(chosen, {})
+	var reports: Dictionary = field_land.places.get(chosen, {})
 	if not reports.has("weather") and not inside and chosen != Land.HOME:
 		_add_words("No word of the weather here.", 14, lab.MUTED)
 	var members: Array = related.get(chosen, [])
@@ -458,11 +476,11 @@ func _add_person(entry: Dictionary) -> void:
 	elif entry.travelling:
 		status = "Seen leaving · " + str(seen.get("purpose", "On the path"))
 	else:
-		status = ("Older sighting · " if Land.stale(seen.seen, family.fire.time) else "") + str(seen.activity)
+		status = ("Older sighting · " if Land.stale(seen.seen, lab.fire.time) else "") + str(seen.activity)
 	_add_words(status, 14, lab.MUTED)
 
 func _add_report(note: Dictionary) -> void:
-	var old := Land.stale(note.seen, family.fire.time)
+	var old := Land.stale(note.seen, lab.fire.time)
 	_add_words(note.text, 16, lab.MUTED if old else lab.TEXT)
 	var line := ("Older report · " if old else "") + str(note.source) + " · " + Land.stamp(note.seen)
 	if note.learned > note.seen:

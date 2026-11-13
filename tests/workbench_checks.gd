@@ -191,8 +191,9 @@ func _action_bar(lab: Control) -> void:
 			if button.visible:
 				visible.append(kind)
 		var kinds: Array = expected[group]
-		_check(lab.group_buttons[group].button_pressed and visible.size() == kinds.size() and
-			kinds.all(func(kind): return kind in visible), "Category %d shows the intended materials" % group)
+		var displayed := kinds + [Fire.LEAVES, Fire.TINDER_BUNDLE] if group == 0 else kinds
+		_check(lab.group_buttons[group].button_pressed and visible.size() == displayed.size() and
+			displayed.all(func(kind): return kind in visible), "Category %d shows the intended materials" % group)
 		for kind: int in kinds:
 			var button: Button = lab.fuel_buttons[kind]
 			_click(button.get_global_rect().get_center())

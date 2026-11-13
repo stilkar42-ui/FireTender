@@ -1,6 +1,7 @@
 extends Node3D
 ## The open limestone shelf beyond the level working floor.
 const LIMESTONE := preload("res://hearth/limestone.gdshader")
+const Paint := preload("res://hearth/painted_material.gd")
 const WIDTHS := [-6.72, -5.29, -3.78, -2.52, -1.40, -0.41, 0.68, 1.71, 3.05, 4.32, 6.10]
 const DEPTHS := [-0.85, 0.45, 1.29, 2.03, 2.86, 3.76, 4.66, 5.55, 6.45, 7.42, 8.35]
 const HEIGHTS := [-0.73, -0.34, -0.06, -0.10, -0.16, -0.23, -0.34, -0.49, -0.84, -1.79, -3.15]
@@ -14,12 +15,9 @@ func _ready() -> void:
 	rng.seed = 42051
 	var limestone := ShaderMaterial.new()
 	limestone.shader = LIMESTONE
+	Paint.bind_brush(limestone, "limestone", 0.72, 0.29)
 	_add_mesh("LimestoneShelf", _shelf(), limestone)
-	var plants := StandardMaterial3D.new()
-	plants.vertex_color_use_as_albedo = true
-	plants.cull_mode = BaseMaterial3D.CULL_DISABLED
-	plants.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
-	plants.roughness = 1.0
+	var plants := Paint.style(Paint.Surface.ORGANIC, Color("#a7ac92"), true)
 	_add_mesh("PinesAndScrub", _vegetation(), plants)
 
 func _height(x: float, z: float) -> float:
@@ -51,11 +49,11 @@ func _shelf() -> SurfaceTool:
 			var b := rows[row][column + 1]
 			var c := rows[row + 1][column]
 			var d := rows[row + 1][column + 1]
-			var seam := rng.randf_range(0.03, 0.13)
+			var seam := rng.randf_range(0.0, 0.04)
 			var path := 1.0 - smoothstep(0.45, 2.30, absf((a.x + d.x) * 0.5))
 			var ink := ROCK.lerp(DUST, path * 0.65).darkened(seam)
 			_face(mesh, a, b, c, ink)
-			_face(mesh, c, b, d, ink.lightened(rng.randf_range(0.0, 0.09)))
+			_face(mesh, c, b, d, ink)
 		_edge(mesh, rows[row + 1][0], rows[row][0], -1.0)
 		_edge(mesh, rows[row][-1], rows[row + 1][-1], 1.0)
 	for column in range(column_count - 1):
@@ -184,7 +182,6 @@ func _grass(mesh: SurfaceTool, at: Vector3, height: float) -> void:
 func _surface() -> SurfaceTool:
 	var mesh := SurfaceTool.new()
 	mesh.begin(Mesh.PRIMITIVE_TRIANGLES)
-	mesh.set_smooth_group(-1)
 	return mesh
 
 func _face(mesh: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, ink: Color) -> void:

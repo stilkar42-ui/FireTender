@@ -127,12 +127,12 @@ func _scene() -> void:
 	bench._refresh(0.0)
 	var steam: MeshInstance3D = bench.steam_views.get(damp_face.get_instance_id())
 	var logs: Array = bench.logs[wet.get_instance_id()]
-	var dry_ink: StandardMaterial3D = logs[0].get_surface_override_material(0)
-	var damp_ink: StandardMaterial3D = logs[2].get_surface_override_material(0)
+	var dry_ink: ShaderMaterial = logs[0].get_surface_override_material(0)
+	var damp_ink: ShaderMaterial = logs[2].get_surface_override_material(0)
 	_check(damp_face.vapor > 0.000006 and steam != null and steam.visible and not bench.plumes.has(damp_face.get_instance_id()),
 		"Actual evaporation draws pale steam from the wet face independently of smoke")
-	_check(dry_ink.roughness > damp_ink.roughness and dry_ink.albedo_color.v > damp_ink.albedo_color.v,
-		"The drier face renders lighter and more matte than the waterlogged end")
+	_check(dry_ink.get_shader_parameter("moisture") < damp_ink.get_shader_parameter("moisture"),
+		"The waterlogged end receives more of the dark, cool pigment wash")
 	fire.shelter.wind = Vector2(0.65, -0.6)
 	fire.shelter.site = 2
 	lab._update_ambient_weather()

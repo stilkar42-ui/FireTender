@@ -45,7 +45,16 @@ func reply(fire: Fire, words: String, hand: Vector3, selected: Fire.Piece, yaw: 
 	var previous: Dictionary = {} if turns.is_empty() else turns.back()
 	last_result = Understanding.interpret(words, previous, hint, chapter != null)
 	if chapter != null and chapter.sequel != null:
-		var topic := chapter.sequel.topic(words)
+		var topic := chapter.sequel.topic(words) if not hint.begins_with("field_") else hint
+		var clean := words.to_lower()
+		if "storm leave" in clean or "storm left" in clean:
+			topic = "field_aftermath"
+		elif "where" in clean and ("wet wood" in clean or "damp wood" in clean):
+			topic = "field_wet"
+		elif "dry" in clean and ("left outside" in clean or ("anything" in clean and "outside" in clean)):
+			topic = "field_dry"
+		elif "dry first" in clean:
+			topic = "field_first"
 		if not topic.is_empty():
 			last_result.intent = topic
 			last_result.route = "subject"
@@ -92,6 +101,8 @@ func reply(fire: Fire, words: String, hand: Vector3, selected: Fire.Piece, yaw: 
 				answer = Chapter.Kin.COUNT_LIMIT
 			elif intent == "ancestor":
 				answer = Chapter.Kin.ANCESTOR
+			elif chapter != null and chapter.sequel != null and intent.begins_with("field_"):
+				answer = chapter.field_answer(intent)
 			elif chapter != null and chapter.sequel != null and (intent.begins_with("myth_") or intent.begins_with("wood_")):
 				answer = chapter.sequel.answer(intent, selected)
 			elif chapter != null and intent == "gather_choice":

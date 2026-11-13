@@ -24,7 +24,7 @@ func _run() -> void:
 	var wood := old.fire.stored[0]
 	var geometry: Node3D = lab.view.workbench.cave
 	var time := old.fire.time
-	var sites := old.sites.duplicate(true)
+	var sites := old.gathering.records.duplicate(true)
 	lab.mentor.story_line("The warmth stays with us.", "family_fixture")
 	_check(not lab.story_menu.visible and not old.begin_family(), "Chapter III is gated by Chapter II completion")
 	old.outcome = "prepared"
@@ -37,7 +37,7 @@ func _run() -> void:
 	_click(lab.story_menu.chapter_button.get_global_rect().get_center())
 	await process_frame
 	_check(lab.chapter == old and old.family != null and old.fire.coals[0] == coal and old.fire.stored[0] == wood
-		and old.sites == sites and old.fire.time == time and geometry == lab.view.workbench.cave
+		and old.gathering.records == sites and old.fire.time == time and geometry == lab.view.workbench.cave
 		and lab.mentor.history.has("The warmth stays with us."), "The live handoff retains the physical cave, time, fuel, routes and dialogue")
 	_check(lab.paused and not lab.pause_button.disabled and lab.practice_line.text.contains("Chapter III"),
 		"Chapter III opens paused with the ordinary time controls available")

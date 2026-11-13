@@ -7,6 +7,7 @@ const Preparedness := preload("res://sim/hollow_preparedness.gd")
 const AfterStorm := preload("res://sim/red_hollow_after_storm.gd")
 const Family := preload("res://sim/red_hollow_family.gd")
 const Quests := preload("res://sim/story_quests.gd")
+const Gathering := preload("res://sim/gathering_sites.gd")
 const TITLE := "Red Hollow"
 const ROUTES := [
 	{"place": "Bark ledge", "time": 42.0, "loads": [{4: 5, 5: 3, 0: 3}, {4: 3, 0: 2, Fire.LEAVES: 4}], "rain": 0.85, "moisture": -1.0,
@@ -22,7 +23,7 @@ const ROUTES := [
 	{"place": "Willows in the hollow", "time": 38.0, "loads": [{13: 4, 7: 2}, {13: 3}], "rain": 0.45, "moisture": 0.62,
 		"description": "The hollow has fallen branches, but they lie on damp ground. I would give them time to dry by the hearth."},
 ]
-const PRIORITIES := ["Mixed armful", "Tinder first", "Kindling first", "Larger wood first"]
+const PRIORITIES := ["Mixed armful", "Tinder first", "Kindling first", "Larger wood first", "Dry wood only", "Logs to dry", "Survey only"]
 const SCOUT := 3
 const PILE_BOUNDS := Rect2(-2.65, -1.42, 3.83, 2.65)
 const OPENING_STOCK := {0: 2, 1: 3, 4: 6, 5: 4, 6: 3, 7: 3, Fire.LEAVES: 4}
@@ -31,13 +32,24 @@ const QUESTIONS := {
 	"storm": "What does that sky tell you?",
 	"gather_choice": "What should my cousin bring?",
 }
+const FIELD_QUESTIONS := {
+	"field_aftermath": "What did the storm leave us?",
+	"field_wet": "Where can Rusk find wet wood?",
+	"field_dry": "Is there anything dry left outside?",
+	"field_first": "Which branches should I dry first?",
+}
 const HANDOFF := "You have watched me choose twice. The wood is yours to judge, and the fire is yours to keep. I’ll help you read it. The choice belongs to our Ember Tender."
 
 var fire: Fire
 var weather: Shelter
 var trips := PackedInt32Array()
-var sites: Array = []
-var carried_load: Array[Vector2i] = [] # Source patch index and material kind.
+var gathering := Gathering.new()
+var land := Family.Land.new()
+var field_reports: Dictionary = {}
+var carried_load := PackedInt32Array()
+var pickup_at := 0.0
+var picked_up := false
+var trip_observation: Dictionary = {}
 var rack_slots := PackedInt32Array([0, 0, 0, 0])
 var consultations: Array[Dictionary] = []
 var away := -1
@@ -70,8 +82,7 @@ func _init(model: Fire) -> void:
 	weather.sample(0.0)
 	fire.shelter = weather
 	trips.resize(ROUTES.size())
-	for route: Dictionary in ROUTES:
-		sites.append(route.loads.duplicate(true))
+	gathering.initialize(ROUTES)
 	for kind: int in OPENING_STOCK:
 		for piece in range(OPENING_STOCK[kind]):
 			_store_piece(kind, -1.0)
@@ -91,6 +102,7 @@ func begin_after_storm() -> bool:
 	weather.after_storm = true
 	weather.sampled = -INF
 	weather.sample(fire.time)
+	gathering.apply_storm(Gathering.OPENING_STORM, Gathering.authored_storm(), fire.time)
 	fire.enable_after_storm_materials()
 	# The stormfall by the mouth includes wood for both drying methods.
 	fire.receive_fuel(11, Vector2(1.06, 1.05), 1.05, 0, 0.58)
@@ -99,7 +111,8 @@ func begin_after_storm() -> bool:
 	lay_out_drying_logs()
 	fire.seat_new_stock()
 	sequel = AfterStorm.new(fire)
-	report = "I brought in wet oak splits, pine and birch. Some dry wood stayed beneath the rock overhang. Open Quests [O] for the drying work."
+	if away < 0:
+		report = "There’s wet wood just outside the shelter and a dry armful under the rock. I’ll check the paths when you send me."
 	supply_revision += 1
 	return true
 
@@ -112,6 +125,12 @@ func lay_out_drying_logs() -> void:
 	# the Chapter I reserve in the storm.
 	for kind in [1, 1, 1, 7, 7, 8, 8, 8, 2, 2, 2, 2]:
 		_store_piece(kind, -1.0)
+	var dry_tinder := 0
+	for piece in fire.stored:
+		if piece.kind in Fire.RAW_TINDER and piece.water < piece.original * 0.23:
+			dry_tinder += 1
+	for _parcel in range(maxi(0, 4 - dry_tinder)):
+		_store_piece(4, -1.0)
 
 func quest_rows() -> Array:
 	if family != null:
@@ -148,8 +167,12 @@ func set_up_after_storm_trial() -> void:
 	fire.receive_fuel(2, Vector2(0.80, -1.29), 0.29, 0, 0.78)
 	fire.receive_fuel(8, Vector2(-1.68, -1.03), 0.82, 1)
 	fire.receive_fuel(2, Vector2(-2.27, -0.69), 1.15, 0)
-	sites[1][0].clear()
-	sites[2][0].clear()
+	for route in [1, 2]:
+		var first_patch := PackedInt32Array()
+		for entry: Dictionary in gathering.records[route].pieces:
+			if entry.patch == 0:
+				first_patch.append(entry.id)
+		gathering.take(route, first_patch, 0.0, 0.0, 10.0)
 	trips[1] = 1
 	trips[2] = 1
 	outcome = "kept"
@@ -159,12 +182,17 @@ func begin_family(seed_value: int = Family.DEFAULT_SEED) -> bool:
 	if outcome != "prepared" or sequel == null or family != null:
 		return false
 	family = Family.new(fire, seed_value)
+	for place: String in family.land.places:
+		for topic: String in family.land.places[place]:
+			var note: Dictionary = family.land.places[place][topic]
+			land.remember(place, topic, note.text, note.source, note.seen, note.learned, note.mark)
+	family.land = land
 	if preserved:
 		family.remember_banking()
 	outcome = ""
 	last_notice = ""
 	if away >= 0:
-		family.scout_departed(away, (fire.time + returns_at) * 0.5)
+		family.scout_departed(away, pickup_at)
 	return true
 
 func set_up_family_trial() -> void:
@@ -178,6 +206,7 @@ func questions() -> Dictionary:
 	var prompts := QUESTIONS.duplicate()
 	if sequel != null:
 		prompts.merge(AfterStorm.QUESTIONS)
+		prompts.merge(FIELD_QUESTIONS)
 	if family != null:
 		prompts.merge(Family.Workshop.Lessons.QUESTIONS)
 	return prompts
@@ -196,8 +225,6 @@ func choose_site(site: int) -> bool:
 
 func route_status(route: int, priority := 0) -> String:
 	var place: Dictionary = ROUTES[route]
-	if not _has_supply(route):
-		return "Already searched" if route == SCOUT else "Picked clean"
 	if weather.rain > place.rain:
 		return "Unsafe in this rain"
 	if route == 2 and weather.light < 0.29:
@@ -206,127 +233,132 @@ func route_status(route: int, priority := 0) -> String:
 		return "Too little daylight for the return"
 	if away >= 0:
 		return "Out on another path"
-	if route != SCOUT and _plan_load(route, priority).is_empty():
-		return "That fuel is unavailable here"
-	return "%d sec of hearth time" % ceili(_journey_time(route))
+	if not _can_visit(route, priority):
+		if route == SCOUT:
+			return "Already searched"
+		if remaining(route) == PackedInt32Array([0, 0, 0]):
+			return "Picked clean"
+		return "That fuel is unavailable here" if sequel == null or _known_current(route) else "No recent report · survey the path"
+	var estimated := _known_current(route) or sequel == null
+	return "%d sec of hearth time" % ceili(_journey_time(route, estimated))
 
 func can_request(route: int, priority := 0) -> bool:
 	if route < 0 or route >= ROUTES.size() or away >= 0 or not outcome.is_empty():
 		return false
-	if not _has_supply(route) or weather.rain > ROUTES[route].rain or (route == 2 and not _ridge_daylight()):
+	if weather.rain > ROUTES[route].rain or (route == 2 and not _ridge_daylight()):
 		return false
-	return route == SCOUT or not _plan_load(route, priority).is_empty()
+	return _can_visit(route, priority)
+
+func _can_visit(route: int, priority: int) -> bool:
+	if route == SCOUT:
+		return trips[route] == 0 or (sequel != null and not _known_current(route))
+	if sequel == null:
+		return not gathering.plan(route, priority, false).is_empty()
+	if priority == 6 or not _known_current(route):
+		return true
+	var note: Dictionary = field_reports[route]
+	match priority:
+		4: return note.dry_load
+		5: return note.drying_load
+		1, 2, 3: return note.grades[priority - 1] > 0
+	return _total(note.counts) > 0
 
 func request(route: int, priority := 0) -> bool:
 	if not can_request(route, priority):
 		return false
 	away = route
-	carried_load = _plan_load(route, priority)
+	carried_load = gathering.plan(route, priority, sequel != null) if priority != 6 else PackedInt32Array()
 	returns_at = fire.time + _journey_time(route)
+	pickup_at = (fire.time + returns_at) * 0.5
+	picked_up = false
+	trip_observation.clear()
 	if family != null:
-		family.scout_departed(route, (fire.time + returns_at) * 0.5)
-	report = "I’ll look up the valley. I’ll tell you what the rain is doing when I get back." if route == SCOUT else \
-		"I’ll take the path to %s. Keep a little warmth for when I get back, cousin." % ROUTES[route].place.to_lower()
+		family.scout_departed(route, pickup_at)
+	report = "I’ll look up the valley and check the sky path." if route == SCOUT else 		"I’ll take the path to %s. Keep a little warmth for when I get back, cousin." % ROUTES[route].place.to_lower()
 	return true
+
+func _pick_up() -> void:
+	picked_up = true
+	carried_load = gathering.take(away, carried_load, fire.time, weather.rain, weather.temperature, "Rusk", sequel != null)
+	trip_observation = gathering.snapshot(away, fire.time)
+	trip_observation.after_storm = sequel != null
+	trip_observation.obstructed = fire.time < float(trip_observation.delay)
+	trip_observation.weather = Family.Land.weather_words(weather.rain, weather.wind.length())
+	trip_observation.weather_mark = Family.Land.weather_mark(weather.rain, weather.wind.length())
+	for id in carried_load:
+		var entry: Dictionary = gathering.records[away].pieces[id]
+		trip_observation.get_or_add("load", PackedInt32Array([0, 0, 0, 0]))
+		var counts: PackedInt32Array = trip_observation.load
+		counts[Gathering.condition(entry)] += 1
+		trip_observation.load = counts
 
 func _arrive() -> void:
 	var route := away
 	trips[route] += 1
 	away = -1
-	var soaked := route == 2 and weather.rain > 0.44
-	for piece in carried_load:
-		var patch: Dictionary = sites[route][piece.x]
-		patch[piece.y] -= 1
-		var moisture := _aftermath_moisture(route, piece) if sequel != null else (0.72 if soaked else float(ROUTES[route].moisture))
-		_store_piece(piece.y, moisture)
+	for id in carried_load:
+		var entry: Dictionary = gathering.records[route].pieces[id]
+		if entry.state != "collected" or entry.fuel_id != 0 or entry.collector != "Rusk":
+			continue
+		var piece := _store_piece(entry.kind, entry.moisture, entry.skin, entry.temperature)
+		entry.fuel_id = piece.id
 	if not carried_load.is_empty():
 		fire._settle(true)
 	carried_load.clear()
+	picked_up = false
 	supply_revision += 1
-	if sequel != null:
-		report = route_description(route) + " " + remaining_words(route)
-	elif route == SCOUT:
-		report = "I saw water on the upper path. A crosswind is pushing it toward the mouth. Keep the dry bundle back from the drip line." if weather.rain > 0.08 else "Cloud is lying beyond the ridge. I marked a dry ledge on the way back. We can still reach the splits before the rain."
-	elif soaked:
-		report = "The rain reached our splits before I did. Use the drier branches first, cousin. " + remaining_words(route)
+	if trip_observation.is_empty():
+		trip_observation = gathering.snapshot(route, fire.time)
+		trip_observation.after_storm = sequel != null
+	trip_observation.learned = fire.time
+	field_reports[route] = trip_observation.duplicate(true)
+	var place: String = Family.Land.ROUTE_PLACES[route]
+	var seen: float = trip_observation.seen
+	if trip_observation.has("weather"):
+		land.remember(place, "weather", trip_observation.weather, "Rusk", seen, fire.time, trip_observation.weather_mark)
+	if route == SCOUT:
+		report = "I checked the sky path. " + str(trip_observation.get("weather", "The valley was in view.")) + "."
 	else:
-		report = "I laid the wood from %s in our pile. %s" % [ROUTES[route].place.to_lower(), remaining_words(route)]
-
+		var brought: PackedInt32Array = trip_observation.get("load", PackedInt32Array([0, 0, 0, 0]))
+		report = ("I carried back " + _condition_words(brought) + ". " if _total(brought) > 0 else "I looked over the site. ") + _report_words(trip_observation)
+		land.remember(place, "fuel", _report_words(trip_observation), "Rusk", seen, fire.time,
+			"caution" if _total(trip_observation.counts) == 0 else "wood")
+		if trip_observation.get("obstructed", false):
+			land.remember(place, "path", "Storm debris slowed the path.", "Rusk", seen, fire.time, "caution")
 	if family != null:
-		var amounts := remaining(route)
-		family.scout_returned(route, report, route != SCOUT,
-			amounts[0] + amounts[1] + amounts[2] <= 3)
+		family.scout_returned(route, report)
+	trip_observation.clear()
+
+func _known_current(route: int) -> bool:
+	var note: Dictionary = field_reports.get(route, {})
+	return not note.is_empty() and (sequel == null or (note.get("after_storm", false) and
+		note.seen >= float(gathering.events.get(Gathering.OPENING_STORM, {}).get("at", Shelter.END))))
 
 func route_description(route: int) -> String:
 	if sequel == null:
 		return ROUTES[route].description
-	return [
-		"The lip kept this bark dry. It is the first place I would look for fibres.",
-		"The fallen pine has sticky knots. Some twigs stayed under rock, but the limbs caught rain.",
-		"The oak splits on the ridge drank the rain. They are heavy enough to wait by the warmth.",
-		"The water is running off the path. I can see which ledges stayed above it.",
-		"Some birch sheltered against the trunk. Feel a broken end and you may find a drier heart.",
-		"The fallen willow lay in the water. Save the sound, dry pieces for the fire while it dries.",
-	][route]
+	if not _known_current(route):
+		return "I haven’t checked this path since the storm."
+	var note: Dictionary = field_reports[route]
+	if route == SCOUT:
+		return str(note.get("weather", "I’ve checked the sky path."))
+	return _report_words(note)
 
-func _aftermath_moisture(route: int, piece: Vector2i) -> float:
-	match route:
-		0: return -1.0
-		1:
-			if piece.y in [1, 6, 7] and piece.x <= 1:
-				return 0.16 if piece.x == 0 else 0.32
-			return 0.83 if piece.y == 11 else 0.63
-		2: return 0.84 if piece.x == 0 else 0.68
-		4: return 0.24 if piece.x == 0 else 0.73
-		5: return 1.12 if piece.y == 13 else 0.62
-	return -1.0
-
-func _journey_time(route: int) -> float:
-	return float(ROUTES[route].time) * (1.0 + weather.rain * 0.36 + (0.20 if weather.light < 0.30 else 0.0))
+func _journey_time(route: int, include_delay := true) -> float:
+	var delay_until: float = gathering.records[route].delay_until
+	var storm_delay := clampf((delay_until - fire.time) * 0.27, 0.0, 24.0) if include_delay else 0.0
+	return float(ROUTES[route].time) * (1.0 + weather.rain * 0.36 + (0.20 if weather.light < 0.30 else 0.0)) + storm_delay
 
 func _ridge_daylight() -> bool:
 	var return_phase := (fposmod(fire.time, Shelter.DAY) + _journey_time(2)) / Shelter.DAY
 	return weather.light >= 0.29 and return_phase < 1.0 and Shelter.daylight(return_phase) >= 0.29
 
-func _grade(kind: int) -> int:
-	if kind in [0, 4, 5, Fire.LEAVES]: return 1
-	if kind in [1, 6, 7, 8]: return 2
-	return 3
-
 func remaining(route: int) -> PackedInt32Array:
-	var amounts := PackedInt32Array([0, 0, 0])
-	for patch: Dictionary in sites[route]:
-		for kind: int in patch:
-			amounts[_grade(kind) - 1] += int(patch[kind])
-	return amounts
-
-func _has_supply(route: int) -> bool:
-	if route == SCOUT:
-		return trips[route] == 0
-	var amounts := remaining(route)
-	return amounts[0] + amounts[1] + amounts[2] > 0
-
-func _plan_load(route: int, priority: int) -> Array[Vector2i]:
-	var load: Array[Vector2i] = []
-	var mass := 0.0
-	for index in range(sites[route].size()):
-		var patch: Dictionary = sites[route][index]
-		for kind: int in patch:
-			if priority != 0 and _grade(kind) != priority:
-				continue
-			var profile: Dictionary = Fire.Materials.PROFILES[Fire.FUEL_MATERIAL[kind]]
-			var material: Dictionary = Fire.SPECIES[kind]
-			var weight := float(material.get("mass", float(material.get("volume", 0.0)) * float(profile.density)))
-			for piece in range(int(patch[kind])):
-				if load.size() == 18 or mass + weight > 3.25:
-					break
-				mass += weight
-				load.append(Vector2i(index, kind))
-		if priority == 0 and not load.is_empty():
-			break
-	return load
+	return gathering.counts(route)
 
 func remaining_words(route: int) -> String:
+	if sequel != null:
+		return "" if not _known_current(route) or route == SCOUT else "Seen " + Family.Land.stamp(field_reports[route].seen) + "."
 	if route == SCOUT:
 		return "I’ve checked that path." if trips[route] > 0 else "I can check what’s coming down the valley."
 	var amounts := remaining(route)
@@ -335,34 +367,74 @@ func remaining_words(route: int) -> String:
 		if amounts[i] > 0:
 			var measure := "a little" if amounts[i] < 4 else ("an armful of" if amounts[i] < 11 else "plenty of")
 			left.append("%s %s" % [measure, ["tinder", "small wood", "larger wood"][i]])
-	if left.is_empty():
-		return "I’ve taken what I can reach there."
-	return "There’s %s left there." % ", ".join(left)
+	return "I’ve taken what I can reach there." if left.is_empty() else "There’s %s left there." % ", ".join(left)
 
-func _store_piece(kind: int, moisture: float) -> void:
+static func _total(counts: PackedInt32Array) -> int:
+	var total := 0
+	for count in counts:
+		total += count
+	return total
+
+static func _condition_words(counts: PackedInt32Array) -> String:
+	var words := PackedStringArray()
+	for index in counts.size():
+		if counts[index] > 0:
+			words.append("%d %s" % [counts[index], Gathering.CONDITIONS[index]])
+	return ", ".join(words) + " pieces"
+
+func _report_words(note: Dictionary) -> String:
+	var total := _total(note.counts)
+	var remaining_text := "I found no wood left to gather." if total == 0 else "Left there: " + _condition_words(note.counts) + "."
+	if note.fallen > 0:
+		remaining_text += " I saw dead branches brought down by the storm."
+	if note.get("obstructed", false):
+		remaining_text += " Storm debris slowed the path."
+	return remaining_text
+
+func field_answer(topic: String) -> String:
+	if topic == "field_first":
+		return "Start with damp deadwood. It may have a drier heart. Set a medium and a large piece on the shelf first, then warm another pair beside the fire. Leave wood from standing water for later."
+	if topic == "field_aftermath":
+		return "The storm left wet branches at our shelter. Ask Rusk to check the paths. His findings go in the Mind Cave."
+	var dry := topic == "field_dry"
+	for route in [0, 1, 4, 2, 5]:
+		if not _known_current(route):
+			continue
+		var note: Dictionary = field_reports[route]
+		if (dry and note.get("dry_load", false)) or (not dry and note.get("drying_load", false)):
+			return "Rusk last found %s at %s. %s" % ["protected wood" if dry else "logs to dry",
+				ROUTES[route].place.to_lower(), "Ask him again if the report is old."]
+	return "Rusk hasn’t reported a supply like that since the storm. Ask him to survey a path or bring back what he can carry."
+func _store_piece(kind: int, moisture: float, wet_skin := false, temperature := INF) -> Fire.Piece:
+	var piece: Fire.Piece
 	if sequel != null and moisture >= 0.34:
 		var wet_slot := wet_delivery_slots
 		wet_delivery_slots += 1
 		var at := Vector2(0.37 + (wet_slot % 5) * 0.15, -1.58 - (wet_slot % 2) * 0.46)
-		var piece := fire.receive_fuel(kind, at, PI * 0.5, floori(wet_slot / 5.0), moisture)
-		if kind == 12:
-			fire.set_wet_skin(piece)
+		piece = fire.receive_fuel(kind, at, PI * 0.5, floori(wet_slot / 5.0), moisture)
+	else:
+		var group := Quests.size_group(kind)
+		var slot := rack_slots[group]
+		rack_slots[group] += 1
+		var z: float = [-1.32, -1.02, -0.69, -0.27][group]
+		var at := Vector2(-1.49 - (slot % 6) * 0.177, z - float(Shelter.DEPTHS[weather.site]) + (slot % 2) * 0.036)
+		piece = fire.receive_fuel(kind, at.clamp(PILE_BOUNDS.position, PILE_BOUNDS.end), PI * 0.5 + (slot % 3 - 1) * 0.10, floori(slot / 6.0), moisture)
+	if wet_skin:
+		fire.set_wet_skin(piece)
+	if is_finite(temperature):
+		piece.temperature = temperature
+		for section in piece.sections:
+			for region: Fire.Piece in section.faces + section.inner + [section.core]:
+				region.temperature = temperature
+		if not piece.sections.is_empty():
+			fire._sync_sections(piece)
+	if sequel != null:
 		sequel.track(piece)
-		return
-	var group := 0 if kind in [0, 4, 5, Fire.LEAVES] else (1 if kind in [1, 6, 7] else (2 if kind in [8, 11, 12, 13] else 3))
-	var slot := rack_slots[group]
-	rack_slots[group] += 1
-	var z: float = [-1.32, -1.02, -0.69, -0.27][group]
-	var at := Vector2(-1.49 - (slot % 6) * 0.177, z - float(Shelter.DEPTHS[weather.site]) + (slot % 2) * 0.036)
-	fire.receive_fuel(kind, at.clamp(PILE_BOUNDS.position, PILE_BOUNDS.end), PI * 0.5 + (slot % 3 - 1) * 0.10, floori(slot / 6.0), moisture)
+	return piece
 
 func gathering_advice() -> String:
 	if sequel != null:
-		if _has_supply(0):
-			return "There is bark left beneath the ledge. Use that dry tinder to keep the red alive while you set the wet branches near the warmth."
-		if _has_supply(4):
-			return "Try the standing birch. Some branches were protected. Your cousin can show you which wood still holds water."
-		return "The dry paths have little left. Keep the dry pieces you already have for the red, and take the wet wood in small loads."
+		return field_answer("field_dry")
 	if consultations.size() >= 2:
 		return HANDOFF
 	if away >= 0:
@@ -418,6 +490,8 @@ func step() -> void:
 	if not outcome.is_empty():
 		return
 	fire.step()
+	if away >= 0 and not picked_up and fire.time >= pickup_at:
+		_pick_up()
 	if away >= 0 and fire.time >= returns_at:
 		_arrive()
 	if family != null:

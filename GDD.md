@@ -49,7 +49,7 @@ These timings are tuned to the game’s clock. Dry outer faces can hide a wet co
 | System | Design |
 | --- | --- |
 | **Fire construction** | Logs have mass, shape, support, orientation and separate moisture and heat readings through the grain. Cold structures can be built before ignition. Contact, airflow, radiant heat and fuel condition shape how fire spreads. Blueprints remember cold layouts for rebuilding with available fuel. |
-| **Gathering and weather** | Gathering sites have finite supplies, travel times and weather constraints. The chosen hearth location changes shelter from rain, wind and smoke. Ash cover preserves a coal bed for later work. |
+| **Gathering and weather** | Gathering sites persist across chapters. The storm can wet remaining wood, scatter new deadwood and slow travel. Rusk reports places he has visited. The chosen hearth location changes shelter from rain, wind and smoke. [Gathering and aftermath](GATHERING_AFTERMATH.md) |
 | **Crafting** | The crafting page uses the Mind Cave’s visual language. Two parcels of any supported raw tinder can be worked into one tinder bundle in eight hearth seconds. The finished bundle retains their moisture. |
 | **Quests and teaching** | The journal gives chapter goals, progress and shortcuts to relevant locations. Chapter I measures dry fuel physically under cover. Chapter II tracks each log and its drying history. Suggested and typed questions work offline, and the Fire Speaker’s lessons can be reviewed. |
 | **Family and place** | Workstations use real tools and finite materials. Family members act independently and ask for heat when needed. The Family Tree records kinship and techniques. The Mind Cave shows witnessed places and reports, including when the information was learned. |
@@ -58,6 +58,8 @@ These timings are tuned to the game’s clock. Dry outer faces can hide a wet co
 ## Presentation
 
 Keep the player in one connected 3D shelter and its immediate landscape. Daylight, rain, drafts and firelight change the view of the same physical space. Use the painted valley, ochre marks, stone textures and warm, restrained panels across the story and tools. Smoke, steam, embers, crackle and weather give the player feedback, with separate volume controls for fire and weather. Keep the Fire Speaker’s dialogue near his seat and leave room for tending controls.
+
+The [Visual Bible](VISUAL_BIBLE.md) defines the palette, material brushwork, light and hearth-state cues for the cave, movable objects and family cutouts.
 
 ## Playtest criteria
 

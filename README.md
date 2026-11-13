@@ -61,6 +61,8 @@ The Speaker tells the story of the Mother of the World, the Sky Father, and thei
 
 The Fire Speaker opens Chapter II with the drying lesson. In Red Hollow a medium log takes about ten minutes on the shelf and a large split takes about twenty. Beside a steady fire they take a few minutes and can scorch if left too close. Ask with **G** to hear the comparison or either method again.
 
+After the storm, use **F6** to ask Rusk to survey a route, gather protected fuel, or bring logs to dry. His reports appear in the **Mind Cave [F10]** when he returns. [Gathering sites and the before-and-after comparison](GATHERING_AFTERMATH.md)
+
 [The opening](outputs/ui-review/phase23/phase23-opening.png) · [The deep interior](outputs/ui-review/phase23/phase23-deep-interior.png) · [The tale](outputs/ui-review/phase23/phase23-tale.png)
 
 ### Matched views across the chapters
