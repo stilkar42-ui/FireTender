@@ -53,7 +53,9 @@ func _initialize() -> void:
 	_check(fire.network_dirty, "Coal translation invalidates contact geometry")
 	fire._prepare_network()
 	fire._mix(coal, 0.016, 0.0, 0.0, 0.0, 0.0, 500.0)
-	_check(fire.network_dirty, "Changed coal material invalidates sampled conductance")
+	_check(not fire.network_dirty, "Residue on an existing coal preserves the current sampling interval")
+	fire._settle()
+	_check(fire.network_dirty, "Settling refreshes changed coal coefficients with fixed geometry")
 	fire._prepare_network()
 	var section := first.sections[0]
 	section.upper_radius *= 0.75

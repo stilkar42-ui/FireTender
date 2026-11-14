@@ -84,13 +84,10 @@ def main():
         if before.keys() != after.keys() or len(before) != 5:
             raise ValueError(f"{mode}: expected five identical replay IDs")
         if args.thermal_scalability and mode == "thermal_trace":
-            # Phase 3.4.1 can refresh material coefficients at a different
-            # boundary. Verify the two backends at the same invalidation policy.
             fallback = read_cases(args.capture_dir / "fallback-thermal_trace.jsonl")
-            if after != fallback:
-                raise ValueError("Phase 3.4.1 native and GDScript thermal replays differ")
-            changed = [case for case in before if before[case] != after[case]]
-            print(f"{mode}: five identical native/fallback replays; baseline differs in {len(changed)} cases")
+            if before != after or after != fallback:
+                raise ValueError("The baseline, native and GDScript thermal replays differ")
+            print(f"{mode}: all five replays match the baseline and both backends")
             continue
         if before != after:
             raise ValueError(f"{mode}: replay mismatch")

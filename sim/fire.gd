@@ -1312,7 +1312,6 @@ func preview(kind: int, at: Vector2, yaw: float, lean: float, tier: int, id: int
 func _settle(gravity := false, fall_step := 0.0, moved_piece: Piece = null) -> void:
 	_invalidate_wind_stock()
 	revision += 1
-	var combustion_changed := supports_dirty or wear_dirty
 	supports_dirty = false
 	wear_dirty = false
 	last_settle = time
@@ -1392,12 +1391,9 @@ func _settle(gravity := false, fall_step := 0.0, moved_piece: Piece = null) -> v
 	seat_cache = next_seats
 	support_geometry = next_geometry
 	storage_dirty = false
-	_check_network_geometry()
-	if not network_dirty and combustion_changed and _network_material() != network_material:
-		network_dirty = true
-
-func _check_network_geometry() -> void:
-	if not network_dirty and _network_geometry() != network_geometry:
+	# Settling was a coefficient sampling boundary even when the active poses
+	# stayed fixed. Reuse the graph only when both sets of inputs still match.
+	if not network_dirty and (_network_geometry() != network_geometry or _network_material() != network_material):
 		network_dirty = true
 
 func _network_geometry() -> Array:
@@ -1414,8 +1410,8 @@ func _network_geometry() -> Array:
 	return geometry
 
 func _network_material() -> Array:
-	# These material-dependent weights are sampled at the existing combustion
-	# settling cadence. Per-step capacities and insulation are still live.
+	# These weights use the original topology rebuild cadence. Per-step
+	# capacities, insulation and emission still read current physical state.
 	var material: Array = []
 	var fibre := _network_has_fibre()
 	for coal in coals:
@@ -1715,8 +1711,6 @@ func uncover() -> void:
 			ash += coal.cover
 		else:
 			_pile_ash(coal.at + Vector2(0.24, 0.12), coal.cover)
-		if coal.cover != 0.0 and _network_has_fibre():
-			network_dirty = true
 		coal.cover = 0.0
 
 func _cover_coal(coal: Piece, dose: float) -> void:
@@ -1724,8 +1718,6 @@ func _cover_coal(coal: Piece, dose: float) -> void:
 	var old_capacity := coal.capacity()
 	coal.cover += dose
 	coal.temperature = ambient() + (coal.temperature - ambient()) * old_capacity / coal.capacity()
-	if _network_has_fibre():
-		network_dirty = true
 
 func _network_has_fibre() -> bool:
 	return wood.any(func(piece: Piece): return piece.fibre)
@@ -1763,8 +1755,6 @@ func sweep_ash(from: Vector2, to: Vector2) -> float:
 	for coal in coals:
 		if not coal.carried and coal.at.distance_to(from) <= 0.22:
 			collected += coal.mineral
-			if coal.mineral > 0.0 and _network_has_fibre():
-				network_dirty = true
 			coal.mineral = 0.0
 	var moved := collected
 	var nearest: Piece
@@ -3241,8 +3231,6 @@ func _deposit(at: Vector2, carbon: float, mineral: float, water: float, heat: fl
 func _mix(coal: Piece, carbon: float, mineral: float, water: float, cover: float, base: float, heat: float,
 		density := 225.0, pores := 0.45, oxidation := 1.0) -> void:
 	var old_capacity := coal.capacity()
-	var old_surface := _surface(coal)
-	var old_contact := clampf(coal.char_mass, 0.018, 0.061)
 	if carbon > 0.0:
 		coal.oxidation_factor = lerpf(coal.oxidation_factor, oxidation, carbon / (coal.char_mass + carbon))
 		var solid_volume := coal.char_mass / coal.char_density + carbon / density
@@ -3255,11 +3243,6 @@ func _mix(coal: Piece, carbon: float, mineral: float, water: float, cover: float
 	coal.cover += cover
 	coal.base_capacity += base
 	coal.temperature += (heat - coal.temperature) * (coal.capacity() - old_capacity) / coal.capacity()
-	# Link construction samples ember surface area, coal contact strength and
-	# fibre normalization. Mixing residue can change them without moving a node.
-	if _surface(coal) != old_surface or clampf(coal.char_mass, 0.018, 0.061) != old_contact \
-			or (old_capacity != coal.capacity() and _network_has_fibre()):
-		network_dirty = true
 
 func _compact_bed() -> void:
 	var a := 0

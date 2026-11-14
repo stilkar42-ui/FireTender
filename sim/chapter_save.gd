@@ -312,6 +312,7 @@ static func _capture_fire(fire: Fire) -> Dictionary:
 		fields.node_refs = fire.nodes.map(func(piece): return indices.get(piece, -1))
 		fields.links = _objects(fire.links)
 		fields.radiant_links = _objects(fire.radiant_links)
+		fields.sampled_network_material = fire.network_material.duplicate(true)
 	fields.breaths = _objects(fire.breaths)
 	fields.falling = _objects(fire.falling)
 	fields.smoke = _plain(fire.smoke_field, ["parcels"])
@@ -399,7 +400,10 @@ static func _restore_fire(fire: Fire, data: Dictionary) -> bool:
 		return false
 	if not fire.network_dirty:
 		fire.network_geometry = fire._network_geometry()
-		fire.network_material = fire._network_material()
+		# Older saves retain their sampled links. With no signature, the next
+		# settle refreshes those coefficients on the original schedule.
+		var material: Variant = data.get("sampled_network_material", [])
+		fire.network_material = material.duplicate(true) if material is Array else []
 	return true
 
 static func _restore_topology(fire: Fire, data: Dictionary, indices: Dictionary) -> bool:
