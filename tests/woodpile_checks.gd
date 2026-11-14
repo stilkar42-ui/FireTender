@@ -18,12 +18,28 @@ func _initialize() -> void:
 func _transfers_and_supports() -> void:
 	var story := _chapter_with_banked_bed()
 	var fire := story.fire
-	_check(fire.wood.is_empty() and fire.stored.size() == 21 and fire.all_fuel().size() == 21,
+	var opening_count := 25 # Includes the four leaf parcels used to teach tinder bundles.
+	var opening_matches := fire.stored.size() == opening_count
+	for kind: int in Chapter.OPENING_STOCK:
+		opening_matches = opening_matches and fire.stored.filter(func(piece): return piece.kind == kind).size() == Chapter.OPENING_STOCK[kind]
+	_check(fire.wood.is_empty() and opening_matches and fire.all_fuel().size() == opening_count,
 		"The opening bundle is made of actual pieces outside the hearth")
 	var site_before := story.remaining(2)
-	_check(story.request(2) and fire.stored.size() == 21, "Gathering creates no pieces at departure")
+	_check(story.request(2) and fire.stored.size() == opening_count and story.remaining(2) == site_before,
+		"Gathering creates no pieces or field debit at departure")
+	var ids := story.carried_load.duplicate()
+	_advance(story, story.pickup_at + Fire.STEP)
+	_check(story.picked_up and story.remaining(2)[2] == site_before[2] - 8 and fire.stored.size() == opening_count,
+		"The field debits the eight specific ridge pieces at pickup and the cave waits for the return")
 	_advance(story, story.returns_at)
-	_check(story.away == -1 and fire.stored.size() == 29 and site_before[2] - story.remaining(2)[2] == 8,
+	var delivered_count := opening_count + 8
+	var delivered_ids := {}
+	for id in ids:
+		var entry: Dictionary = story.gathering.records[2].pieces[id]
+		var delivered := fire.fuel_by_id(entry.fuel_id)
+		if delivered != null and delivered.kind == entry.kind:
+			delivered_ids[delivered.id] = true
+	_check(story.away == -1 and fire.stored.size() == delivered_count and delivered_ids.size() == 8,
 		"A ridge armful removes eight pieces at source and delivers eight physical logs and branches")
 	var original := fire.stock_piece(2)
 	var initial_id := original.id
@@ -31,14 +47,14 @@ func _transfers_and_supports() -> void:
 	var origin := original.at
 	var placed := fire.add_fuel(2, Vector2(0.31, 0.08), PI * 0.5, 0.0, 0, true)
 	_check(placed == original and original.id == initial_id and original not in fire.stored and original.at != origin and
-		fire.all_fuel().size() == 29 and _material(original) == original_state,
+		fire.all_fuel().size() == delivered_count and _material(original) == original_state,
 		"Fuel bar placement picks up the actual stocked oak without altering its material")
 	fire.uncover()
 	_advance(story, fire.time + 6.0)
 	var warmed := _material(original)
 	var shelf := Vector2(-2.06, 0.67)
 	_check(fire.pose_fuel(original, shelf, 0.0, 0.0, 0, true) and original.id == initial_id and
-		_material(original) == warmed and fire.all_fuel().size() == 29,
+		_material(original) == warmed and fire.all_fuel().size() == delivered_count,
 		"Putting a warmed piece back preserves its water, heat, mass and section wear")
 	var top := fire.stock_piece(10)
 	var total_before := fire.all_fuel().size()
