@@ -84,6 +84,7 @@ var effects_clock := 0.0
 var ground_sparks: Array[Dictionary] = []
 var pop_marks: Array[Dictionary] = []
 var last_revision := -1
+var next_wind_draw := 0.0
 var last_weather := -1
 var camera_dirty := true
 var lamp_power := 0.0
@@ -118,6 +119,7 @@ func replace_fire(model: Fire) -> void:
 	fire.structure_event.connect(_structure_event)
 	fire.spark_grounded.connect(_ground_spark)
 	last_revision = -1
+	next_wind_draw = 0.0
 
 func reset_scene() -> void:
 	for chunk in debris:
@@ -509,6 +511,7 @@ func set_acceleration(multiplier: int) -> void:
 		return
 	refresh_interval = interval
 	refresh_left = 0.0
+	next_wind_draw = 0.0
 	_fit_raster()
 	stage.render_target_update_mode = SubViewport.UPDATE_ALWAYS if interval == 0.0 else SubViewport.UPDATE_ONCE
 
@@ -527,29 +530,10 @@ func _refresh(delta: float) -> void:
 	var steam_sources := {}
 	var strongest := 0.0
 	var luminous := Vector3(0, 0.14, 0)
-	for piece in fire.all_fuel():
-		if piece.pose == null:
-			continue
-		var key := piece.get_instance_id()
-		alive[key] = true
-		if not logs.has(key):
-			_create_log(piece)
-		elif logs[key].size() != maxi(1, piece.sections.size()):
-			for node in logs[key]:
-				node.queue_free()
-			_create_log(piece)
-		var first: MeshInstance3D = logs[key][0]
-		var is_stored := piece in fire.stored
-		var moisture := _face_moisture(piece) if is_stored else PackedFloat32Array()
-		if not is_stored or not first.has_meta("stored_pose") or first.get_meta("stored_pose") != piece.pose or first.get_meta("stored_moisture") != moisture:
-			_update_log(piece, logs[key])
-			first.set_meta("stored_pose", piece.pose)
-			first.set_meta("stored_moisture", moisture)
-		if piece.sections.is_empty():
-			_show_steam(piece, steam_sources)
-		for section in piece.sections:
-			for face in section.faces:
-				_show_steam(face, steam_sources)
+	for piece in fire.wood:
+		_refresh_fuel_piece(piece, false, alive, steam_sources)
+	for piece in fire.stored:
+		_refresh_fuel_piece(piece, true, alive, steam_sources)
 	for p in fire.thermal_sources():
 		var key := p.get_instance_id()
 		sources[key] = true
@@ -579,6 +563,42 @@ func _refresh(delta: float) -> void:
 	lamp_power = clampf(strongest * 1.15, 0.0, 1.94)
 	mood.ambient_light_energy = 0.50 if fire.weather == 3 else 0.58
 	_ambient_effects()
+
+func _refresh_fuel_piece(piece: Fire.Piece, is_stored: bool, alive: Dictionary, steam_sources: Dictionary) -> void:
+	if piece.pose == null:
+		return
+	var key := piece.get_instance_id()
+	alive[key] = true
+	if not logs.has(key):
+		_create_log(piece)
+	elif logs[key].size() != maxi(1, piece.sections.size()):
+		for node in logs[key]:
+			node.queue_free()
+		_create_log(piece)
+	var first: MeshInstance3D = logs[key][0]
+	if not is_stored:
+		_update_log(piece, logs[key])
+		if first.has_meta("stored_sample"):
+			first.remove_meta("stored_sample")
+			first.remove_meta("stored_pose")
+	else:
+		var face_id := piece.id if piece.faces.is_empty() else piece.faces[0].id
+		var sample := [fire.storage_sample, piece.pose, piece.roll_travel, face_id]
+		if first.get_meta("stored_sample", []) != sample:
+			var moisture := _face_moisture(piece)
+			if not first.has_meta("stored_pose") or first.get_meta("stored_pose") != piece.pose or first.get_meta("stored_roll", INF) != piece.roll_travel \
+					or first.get_meta("stored_face", -1) != face_id or first.get_meta("stored_moisture", PackedFloat32Array()) != moisture:
+				_update_log(piece, logs[key])
+			first.set_meta("stored_sample", sample)
+			first.set_meta("stored_roll", piece.roll_travel)
+			first.set_meta("stored_face", face_id)
+			first.set_meta("stored_moisture", moisture)
+		first.set_meta("stored_pose", piece.pose)
+	if piece.sections.is_empty():
+		_show_steam(piece, steam_sources)
+	for section in piece.sections:
+		for face in section.faces:
+			_show_steam(face, steam_sources)
 
 func _ambient_effects() -> void:
 	if effects_step != fire.time:
@@ -692,6 +712,10 @@ func _ground_spark(fragment: Fire.Spark) -> void:
 		ground_sparks.append({"spark": fragment, "at": seconds})
 
 func _update_wind() -> void:
+	# Paint the wind strokes at 30 Hz. Camera motion and physical wind stay live.
+	if seconds < next_wind_draw:
+		return
+	next_wind_draw = seconds + 1.0 / 30.0
 	var mesh := wind_lines.mesh as ImmediateMesh
 	mesh.clear_surfaces()
 	if refresh_interval > 0.0:

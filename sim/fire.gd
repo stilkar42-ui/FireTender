@@ -6,6 +6,7 @@ const STEP := 0.25
 const Structure := preload("res://sim/structure.gd")
 const Feeding := preload("res://sim/feeding.gd")
 const Materials := preload("res://sim/wood_materials.gd")
+const Native := preload("res://sim/native_fire.gd")
 const MAX_WOOD := 28
 const MAX_FRAGMENTS := 6
 const GRAVITY := 9.81
@@ -331,12 +332,48 @@ var fan := 0.0
 var next_id := 1
 var revision := 0
 var network_dirty := true
+var network_geometry: Array = []
+var network_material: Array = []
 var supports_dirty := false
 var wear_dirty := false
 var last_settle := -INF
+var seat_cache := {}
+var support_geometry := {}
+var support_geometry_serial := 0
 var nodes: Array[Piece] = []
-var links: Array[Link] = []
-var radiant_links: Array[Link] = []
+const EXCHANGE_LINK_WIDTH := 15
+var _links: Array[Link] = []
+var _radiant_links: Array[Link] = []
+var packed_topology := false
+var packed_radiant_count := 0
+var links: Array[Link]:
+	get:
+		_materialize_links()
+		return _links
+	set(value):
+		_links = value
+var radiant_links: Array[Link]:
+	get:
+		_materialize_links()
+		return _radiant_links
+	set(value):
+		_radiant_links = value
+var exchange_links := PackedFloat64Array()
+var exchange_nodes := PackedFloat64Array()
+var exchange_fibre: Array[Link] = []
+var exchange_bed: Array[Link] = []
+var network_candidates := 0
+var network_occluders: Array[Piece] = []
+var occluder_centers := PackedVector3Array()
+var occluder_axes := PackedVector3Array()
+var occluder_inverse_axis := PackedFloat64Array()
+var occluder_radius := PackedFloat64Array()
+var occluder_lower := PackedVector3Array()
+var occluder_upper := PackedVector3Array()
+var radiation_cells := {}
+var airflow_cells := {}
+var wind_stock_cells := {}
+var wind_stock_indexed := false
 var crowding := PackedFloat64Array()
 var starter_ventilation := PackedFloat64Array()
 var tinder_job := {}
@@ -375,6 +412,7 @@ func setup(scenario: int) -> void:
 	ash_piles.clear()
 	revision += 1
 	wood.clear()
+	_invalidate_wind_stock()
 	coals.clear()
 	breaths.clear()
 	falling.clear()
@@ -384,6 +422,9 @@ func setup(scenario: int) -> void:
 	supports_dirty = false
 	wear_dirty = false
 	last_settle = -INF
+	seat_cache.clear()
+	support_geometry.clear()
+	support_geometry_serial = 0
 	weather = 0
 	time = 0.0
 	radiated = 0.0
@@ -708,32 +749,55 @@ func background_wind(at: Vector2, height := 0.05, owner := 0) -> Vector2:
 	var across := forward.orthogonal()
 	var probe_height := maxf(0.035, height)
 	var remaining := 1.0
+	if not wind_stock_indexed:
+		_index_wind_stock()
+	for piece: Piece in wind_stock_cells.get(_wind_stock_cell(at), []):
+		if piece.id == owner or piece.radius < 0.032 or piece.pose == null or piece.airborne:
+			continue
+		var offset := at - piece.pose.at
+		if offset.length_squared() > 1.44:
+			continue
+		var cross_axis := piece.pose.axis.dot(across)
+		var along := 0.0
+		if absf(cross_axis) > 0.015:
+			along = clampf(offset.dot(across) / cross_axis, -piece.pose.span, piece.pose.span)
+		var from_log := offset - piece.pose.axis * along
+		var downstream := from_log.dot(forward)
+		if downstream <= 0.0 or downstream >= 0.78:
+			continue
+		var section := piece.cross_section(along / maxf(0.01, piece.pose.span))
+		var width := section.radius + downstream * 0.10
+		var side := 1.0 - smoothstep(width * 0.63, width, absf(from_log.dot(across)))
+		var center := piece.pose.height + along * piece.pose.slope
+		var crown := section.upper_radius + downstream * 0.12
+		var underside := section.lower_radius + downstream * 0.07
+		var above := probe_height - center
+		var vertical := 1.0 - smoothstep(0.65, 1.0, above / crown if above >= 0.0 else -above / underside)
+		var wake := smoothstep(0.008, 0.09, downstream) * (1.0 - smoothstep(0.12, 0.78, downstream))
+		remaining *= 1.0 - 0.78 * side * vertical * wake
+	return flow * maxf(0.15, remaining)
+
+static func _wind_stock_cell(at: Vector2) -> Vector2i:
+	return Vector2i(floori(at.x * 2.0), floori(at.y * 2.0))
+
+func _index_wind_stock() -> void:
+	# Each query can only see centres within 1.2 m. Expanded bounds let
+	# probes read a single bucket in the original wood/stored order.
+	var extent := Vector2.ONE * 1.201
 	for pieces in [wood, stored]:
 		for piece: Piece in pieces:
-			if piece.id == owner or piece.radius < 0.032 or piece.pose == null or piece.airborne:
+			if piece.pose == null:
 				continue
-			var offset := at - piece.pose.at
-			if offset.length_squared() > 1.44:
-				continue
-			var cross_axis := piece.pose.axis.dot(across)
-			var along := 0.0
-			if absf(cross_axis) > 0.015:
-				along = clampf(offset.dot(across) / cross_axis, -piece.pose.span, piece.pose.span)
-			var from_log := offset - piece.pose.axis * along
-			var downstream := from_log.dot(forward)
-			if downstream <= 0.0 or downstream >= 0.78:
-				continue
-			var section := piece.cross_section(along / maxf(0.01, piece.pose.span))
-			var width := section.radius + downstream * 0.10
-			var side := 1.0 - smoothstep(width * 0.63, width, absf(from_log.dot(across)))
-			var center := piece.pose.height + along * piece.pose.slope
-			var crown := section.upper_radius + downstream * 0.12
-			var underside := section.lower_radius + downstream * 0.07
-			var above := probe_height - center
-			var vertical := 1.0 - smoothstep(0.65, 1.0, above / crown if above >= 0.0 else -above / underside)
-			var wake := smoothstep(0.008, 0.09, downstream) * (1.0 - smoothstep(0.12, 0.78, downstream))
-			remaining *= 1.0 - 0.78 * side * vertical * wake
-	return flow * maxf(0.15, remaining)
+			var first := _wind_stock_cell(piece.pose.at - extent)
+			var last := _wind_stock_cell(piece.pose.at + extent)
+			for x in range(first.x, last.x + 1):
+				for y in range(first.y, last.y + 1):
+					wind_stock_cells.get_or_add(Vector2i(x, y), []).append(piece)
+	wind_stock_indexed = true
+
+func _invalidate_wind_stock() -> void:
+	wind_stock_indexed = false
+	wind_stock_cells.clear()
 
 func airflow() -> float:
 	var peak := background_wind(Vector2.ZERO).length()
@@ -862,6 +926,7 @@ func receive_fuel(kind: int, at: Vector2, yaw: float, tier: int, moisture := -1.
 	return piece
 
 func seat_new_stock() -> void:
+	_invalidate_wind_stock()
 	# A new delivery needs a pose immediately. Existing pieces keep their
 	# rests and any fall in progress until the simulation advances.
 	var arrivals := stored.filter(func(piece: Piece): return piece.pose == null)
@@ -1245,11 +1310,12 @@ func preview(kind: int, at: Vector2, yaw: float, lean: float, tier: int, id: int
 		length, thickness, lean, below, coals, precise, body)
 
 func _settle(gravity := false, fall_step := 0.0, moved_piece: Piece = null) -> void:
+	_invalidate_wind_stock()
 	revision += 1
+	var combustion_changed := supports_dirty or wear_dirty
 	supports_dirty = false
 	wear_dirty = false
 	last_settle = time
-	network_dirty = true
 	var ordered := all_fuel().duplicate()
 	ordered.sort_custom(func(a: Piece, b: Piece) -> bool:
 		if a.tier != b.tier:
@@ -1258,11 +1324,16 @@ func _settle(gravity := false, fall_step := 0.0, moved_piece: Piece = null) -> v
 		var second := _rest_order(b)
 		return a.id < b.id if first == second else first < second)
 	var below: Array[Piece] = []
+	var next_seats := {}
+	var next_geometry := {}
 	var settle_pile := storage_dirty or stored.any(_moving_fuel) or (shelter != null and wood.any(func(piece: Piece): return not in_hearth(piece.at)))
 	for piece: Piece in ordered:
 		if not settle_pile and piece in stored and piece.pose != null and not _moving_fuel(piece):
+			if seat_cache.has(piece.id):
+				next_seats[piece.id] = seat_cache[piece.id]
 			if piece.can_support:
 				below.append(piece)
+				_remember_support_geometry(piece, next_geometry)
 			continue
 		var thickness := piece.radius
 		var previous := piece.pose
@@ -1273,6 +1344,23 @@ func _settle(gravity := false, fall_step := 0.0, moved_piece: Piece = null) -> v
 		if piece.airborne:
 			# The freshly separated ends share an axis, but their rims cannot catch on each other.
 			rests = rests.filter(func(support): return support.split_family != piece.split_family)
+		var seat_inputs: Array = []
+		if shelter != null and not piece.fed and not _moving_fuel(piece):
+			# Reuse a stable seat only when every input to the fit agrees.
+			# This includes potential supports in the original order, so changes
+			# propagate upward through an entire stack in this same pass.
+			seat_inputs = _seat_inputs(piece, rests, next_geometry)
+			var cached: Array = seat_cache.get(piece.id, [])
+			if not cached.is_empty() and cached[1] == previous and cached[0] == seat_inputs:
+				next_seats[piece.id] = cached
+				# Worn upper faces can need new thermal coordinates even when
+				# the underside fits exactly as it did before.
+				if piece in wood:
+					_sync_seated_piece(piece)
+				if piece.can_support:
+					below.append(piece)
+					_remember_support_geometry(piece, next_geometry)
+				continue
 		piece.pose = Structure.seat(piece.at, piece.axis, piece.size, thickness, piece.lean, rests, coals, piece.precise, piece,
 			previous if piece.fed else null)
 		if piece.airborne:
@@ -1294,10 +1382,87 @@ func _settle(gravity := false, fall_step := 0.0, moved_piece: Piece = null) -> v
 		if not piece.airborne and piece.rolling and fall_step > 0.0:
 			_gravity_rest(piece, rests, ordered, fall_step)
 		_sync_seated_piece(piece)
+		if not seat_inputs.is_empty() and not _moving_fuel(piece):
+			next_seats[piece.id] = [seat_inputs, piece.pose]
 		if piece.can_support and not piece.airborne:
 			below.append(piece)
+			if shelter != null:
+				_remember_support_geometry(piece, next_geometry)
 	_apply_weight(ordered)
+	seat_cache = next_seats
+	support_geometry = next_geometry
 	storage_dirty = false
+	_check_network_geometry()
+	if not network_dirty and combustion_changed and _network_material() != network_material:
+		network_dirty = true
+
+func _check_network_geometry() -> void:
+	if not network_dirty and _network_geometry() != network_geometry:
+		network_dirty = true
+
+func _network_geometry() -> Array:
+	# Only active wood supplies thermal nodes, radiation blockers and air-path
+	# blockers. Stored wood can still change these inputs by moving a support.
+	var geometry: Array = []
+	for coal in coals:
+		geometry.append(_thermal_geometry(coal))
+	for piece in wood:
+		geometry.append([_thermal_geometry(piece), piece.pose != null, piece.airborne])
+		for section in piece.sections:
+			for face in section.faces:
+				geometry.append(_thermal_geometry(face))
+	return geometry
+
+func _network_material() -> Array:
+	# These material-dependent weights are sampled at the existing combustion
+	# settling cadence. Per-step capacities and insulation are still live.
+	var material: Array = []
+	var fibre := _network_has_fibre()
+	for coal in coals:
+		material.append([_surface(coal), clampf(coal.char_mass, 0.018, 0.061), coal.capacity() if fibre else 0.0])
+	if fibre:
+		for piece in wood:
+			if piece.faces.is_empty():
+				material.append(piece.capacity())
+			else:
+				for section in piece.sections:
+					for face in section.faces:
+						material.append(face.capacity())
+	return material
+
+static func _thermal_geometry(piece: Piece) -> Array:
+	return [piece, piece.id, piece.owner, piece.at, piece.height, piece.axis, piece.heat_axis,
+		piece.radius, piece.size, piece.layer, piece.precise, piece.carried,
+		piece.kind, piece.fibre, piece.original, piece.area_scale, piece.fraction]
+
+func _seat_inputs(piece: Piece, rests: Array[Piece], current_geometry: Dictionary) -> Array:
+	var lower_profile: Array = [piece.lower_radius]
+	for section in piece.sections:
+		lower_profile.append([section.id, section.lower_radius, section.faces[0].id])
+	var neighbors := PackedInt32Array()
+	for support in rests:
+		neighbors.append(current_geometry[support.id][1])
+	var ground := []
+	# Samples never extend past the log's length. Coal support reaches 0.09 farther.
+	var reach := piece.size + 0.091
+	for coal in coals:
+		if not coal.carried and coal.at.distance_squared_to(piece.at) <= reach * reach:
+			ground.append([coal.id, coal.at, Structure.coal_level(coal.char_mass)])
+	return [piece.at, piece.axis, piece.size, piece.radius, piece.lean, piece.precise,
+		piece.centre_of_mass, lower_profile, neighbors, ground]
+
+func _remember_support_geometry(piece: Piece, current_geometry: Dictionary) -> void:
+	var pose := piece.pose
+	var profile := [piece.at, piece.axis, pose.height, pose.slope, pose.span,
+		piece.radius, piece.upper_radius, piece.integrity, piece.crushed]
+	for section in piece.sections:
+		profile.append([section.upper_radius, section.integrity, section.crushed])
+	var cached: Array = support_geometry.get(piece.id, [])
+	if not cached.is_empty() and cached[0] == profile:
+		current_geometry[piece.id] = cached
+		return
+	support_geometry_serial += 1
+	current_geometry[piece.id] = [profile, support_geometry_serial]
 
 func _sync_seated_piece(piece: Piece) -> void:
 	piece.height = piece.pose.height
@@ -1516,6 +1681,7 @@ func _cell(at: Vector2) -> Vector2i:
 	return Vector2i((at / CELL).round())
 
 func _reindex() -> void:
+	_invalidate_wind_stock()
 	cells.clear()
 	for coal in coals:
 		if not coal.carried:
@@ -1549,6 +1715,8 @@ func uncover() -> void:
 			ash += coal.cover
 		else:
 			_pile_ash(coal.at + Vector2(0.24, 0.12), coal.cover)
+		if coal.cover != 0.0 and _network_has_fibre():
+			network_dirty = true
 		coal.cover = 0.0
 
 func _cover_coal(coal: Piece, dose: float) -> void:
@@ -1556,6 +1724,11 @@ func _cover_coal(coal: Piece, dose: float) -> void:
 	var old_capacity := coal.capacity()
 	coal.cover += dose
 	coal.temperature = ambient() + (coal.temperature - ambient()) * old_capacity / coal.capacity()
+	if _network_has_fibre():
+		network_dirty = true
+
+func _network_has_fibre() -> bool:
+	return wood.any(func(piece: Piece): return piece.fibre)
 
 static func ash_radius(mass: float) -> float:
 	return clampf(0.07 + sqrt(mass) * 1.15, 0.08, 0.31)
@@ -1590,6 +1763,8 @@ func sweep_ash(from: Vector2, to: Vector2) -> float:
 	for coal in coals:
 		if not coal.carried and coal.at.distance_to(from) <= 0.22:
 			collected += coal.mineral
+			if coal.mineral > 0.0 and _network_has_fibre():
+				network_dirty = true
 			coal.mineral = 0.0
 	var moved := collected
 	var nearest: Piece
@@ -1612,6 +1787,13 @@ func blow() -> void:
 
 func _prepare_network() -> void:
 	network_dirty = false
+	network_geometry = _network_geometry()
+	network_material = _network_material()
+	exchange_links.clear()
+	_links.clear()
+	_radiant_links.clear()
+	packed_topology = false
+	packed_radiant_count = 0
 	nodes = coals.duplicate()
 	for piece in wood:
 		if piece.faces.is_empty():
@@ -1619,14 +1801,34 @@ func _prepare_network() -> void:
 		else:
 			for section in piece.sections:
 				nodes.append_array(section.faces)
-	links.clear()
-	radiant_links.clear()
-	crowding.fill(0.0)
-	crowding.resize(nodes.size())
+	network_candidates = 0
 	capacities.resize(nodes.size())
 	insulations.resize(nodes.size())
 	changes.resize(nodes.size())
 	ember_heat.resize(coals.size())
+	if Native.enabled and nodes.size() >= 32 and nodes.size() <= 1024 \
+			and ClassDB.class_has_method(Native.KERNEL, &"build_network") and _build_network_native():
+		return
+	_index_network_occluders()
+	starter_ventilation.resize(nodes.size())
+	starter_ventilation.fill(0.0)
+	if wood.size() >= 5:
+		for i in nodes.size():
+			var piece := nodes[i]
+			if _ventilated_starter(piece):
+				starter_ventilation[i] = _starter_passage(piece)
+	_build_network_reference()
+
+static func _ventilated_starter(piece: Piece) -> bool:
+	return (piece.kind < 0 and piece.original <= 0.025 and not piece.carried) \
+		or piece.kind in STARTERS or piece.kind in PLUME_FUEL or piece.layer < 0
+
+func _build_network_reference() -> void:
+	# Allocate independently of any version 4 snapshot used to restore this fire.
+	crowding = PackedFloat64Array()
+	crowding.resize(nodes.size())
+	var pair_rows := _network_pair_rows()
+	network_candidates = 0
 	var loads := PackedFloat64Array()
 	loads.resize(nodes.size())
 	var flame_loads := PackedFloat64Array()
@@ -1637,16 +1839,24 @@ func _prepare_network() -> void:
 	ember_views.resize(coals.size())
 	var views := PackedFloat64Array()
 	views.resize(nodes.size())
-	starter_ventilation.resize(nodes.size())
-	starter_ventilation.fill(0.0)
-	if wood.size() >= 5:
-		for i in range(nodes.size()):
-			var piece := nodes[i]
-			if (piece.kind < 0 and piece.original <= 0.025 and not piece.carried) or piece.kind in STARTERS or piece.kind in PLUME_FUEL or piece.layer < 0:
-				starter_ventilation[i] = _starter_passage(piece)
+	var positions := PackedVector3Array()
+	var area_weights := PackedFloat64Array()
+	var caps := PackedFloat64Array()
+	var span_squared := PackedFloat64Array()
+	positions.resize(nodes.size())
+	area_weights.resize(nodes.size())
+	caps.resize(nodes.size())
+	span_squared.resize(nodes.size())
+	for i in nodes.size():
+		var piece := nodes[i]
+		positions[i] = _thermal_position(piece)
+		area_weights[i] = _surface(piece) * 0.078
+		caps[i] = 0.56 * piece.original / float(SPECIES[piece.kind].mass) if piece.fibre else 0.56
+		span_squared[i] = maxf(0.0001, piece.heat_axis.length_squared())
 	for i in range(nodes.size()):
 		var a := nodes[i]
-		for j in range(i + 1, nodes.size()):
+		network_candidates += pair_rows[i].size()
+		for j in pair_rows[i]:
 			var b := nodes[j]
 			if a.owner != 0 and a.owner == b.owner:
 				continue
@@ -1762,13 +1972,18 @@ func _prepare_network() -> void:
 					var lift := fuel.height - coal.height
 					link.ember_feedback *= 1.0 + 11.0 * smoothstep(0.04, 0.11, lift) * (1.0 - smoothstep(0.24, 0.47, lift))
 				ember_views[link.coal] += link.ember_feedback
-			var from := _thermal_position(a)
-			var to := _thermal_position(b)
+			var from := positions[i]
+			var to := positions[j]
 			var direction := to - from
 			if direction.length_squared() > 0.00000001:
 				var visibility := _radiation_visibility(from, to, a, b) if geometry else 0.20
-				link.view_a = _view_weight(b, a, direction, visibility)
-				link.view_b = _view_weight(a, b, -direction, visibility)
+				var toward := direction.normalized()
+				var nearest_a := direction - a.heat_axis * clampf(direction.dot(a.heat_axis) / span_squared[i], -0.85, 0.85)
+				var nearest_b := -direction - b.heat_axis * clampf((-direction).dot(b.heat_axis) / span_squared[j], -0.85, 0.85)
+				var facing_a := _facing(a, -toward)
+				var facing_b := _facing(b, toward)
+				link.view_a = minf(caps[i], area_weights[i] * 0.52 / (0.010 + nearest_a.length_squared())) * visibility * facing_b * facing_a
+				link.view_b = minf(caps[j], area_weights[j] * 0.52 / (0.010 + nearest_b.length_squared())) * visibility * facing_a * facing_b
 				views[i] += link.view_a
 				views[j] += link.view_b
 			# The greatest possible downwind reach bounds flame feedback for this link.
@@ -1786,8 +2001,8 @@ func _prepare_network() -> void:
 				var overlap := 0.72 * exp(-delta.length_squared() / 0.006 - gap * gap / 0.021)
 				crowding[i] += overlap
 				crowding[j] += overlap
-			links.append(link)
-	for link in links:
+			_links.append(link)
+	for link in _links:
 		# Bound outgoing conduction even in a dense stack. Scale each link
 		# symmetrically, and cap feedback to a fraction of each flame's energy.
 		link.conductance /= maxf(1.0, 2.0 * STEP * maxf(loads[link.a], loads[link.b]))
@@ -1801,13 +2016,214 @@ func _prepare_network() -> void:
 		link.view_a /= maxf(1.0, views[link.a] / RADIATION_CAPTURE_LIMIT)
 		link.view_b /= maxf(1.0, views[link.b] / RADIATION_CAPTURE_LIMIT)
 		if link.view_a > 0.0 or link.view_b > 0.0:
-			radiant_links.append(link)
+			_radiant_links.append(link)
 		link.receive_a /= maxf(1.0, flame_loads[link.b] / (0.69 if nodes[link.b].kind == TINDER_BUNDLE else 0.55))
 		link.receive_b /= maxf(1.0, flame_loads[link.a] / (0.69 if nodes[link.a].kind == TINDER_BUNDLE else 0.55))
 	for i in range(nodes.size()):
 		# Open side inlets and an upward exit can ventilate a starter even
 		# when several nearby surfaces contribute to the crowding estimate.
 		crowding[i] *= lerpf(1.0, 0.25, starter_ventilation[i])
+
+func _candidate_geometry() -> PackedFloat64Array:
+	var geometry := PackedFloat64Array()
+	geometry.resize(nodes.size() * 6)
+	var offset := 0
+	for piece in nodes:
+		geometry[offset] = piece.at.x
+		geometry[offset + 1] = piece.at.y
+		geometry[offset + 2] = piece.height
+		geometry[offset + 3] = piece.size
+		geometry[offset + 4] = piece.owner
+		geometry[offset + 5] = piece.kind
+		offset += 6
+	return geometry
+
+func _network_pair_rows() -> Array[PackedInt32Array]:
+	if Native.enabled and nodes.size() >= 64 and nodes.size() <= 1024:
+		var pairs: PackedFloat64Array = ClassDB.class_call_static(Native.KERNEL, &"candidate_pairs", _candidate_geometry())
+		if not pairs.is_empty():
+			var rows: Array[PackedInt32Array] = []
+			rows.resize(nodes.size())
+			for i in range(0, pairs.size(), 2):
+				rows[int(pairs[i])].append(int(pairs[i + 1]))
+			return rows
+	return _network_pair_rows_reference()
+
+func _build_network_native() -> bool:
+	var geometry := PackedFloat64Array()
+	geometry.resize(nodes.size() * 28)
+	var offset := 0
+	for i in nodes.size():
+		var piece := nodes[i]
+		geometry[offset] = piece.at.x
+		geometry[offset + 1] = piece.at.y
+		geometry[offset + 2] = piece.height
+		geometry[offset + 3] = piece.size
+		geometry[offset + 4] = piece.owner
+		geometry[offset + 5] = piece.kind
+		geometry[offset + 6] = piece.id
+		geometry[offset + 7] = piece.axis.x
+		geometry[offset + 8] = piece.axis.y
+		geometry[offset + 9] = piece.heat_axis.x
+		geometry[offset + 10] = piece.heat_axis.y
+		geometry[offset + 11] = piece.heat_axis.z
+		geometry[offset + 12] = piece.radius
+		geometry[offset + 13] = piece.layer
+		geometry[offset + 14] = float(piece.precise)
+		geometry[offset + 15] = float(piece.fibre)
+		geometry[offset + 16] = piece.original
+		geometry[offset + 17] = piece.area_scale
+		geometry[offset + 18] = piece.fraction
+		geometry[offset + 19] = float(piece.carried)
+		geometry[offset + 20] = piece.char_mass
+		geometry[offset + 21] = piece.capacity()
+		geometry[offset + 22] = _surface(piece) * 0.078
+		geometry[offset + 23] = float(SPECIES[piece.kind].mass) if piece.fibre else 0.0
+		geometry[offset + 24] = float(wood.size() >= 5 and _ventilated_starter(piece))
+		geometry[offset + 25] = float(piece.kind in PLUME_FUEL)
+		geometry[offset + 26] = float(piece.kind == TINDER_BUNDLE)
+		geometry[offset + 27] = float(piece.kind in [0, 6, 7, 1])
+		offset += 28
+	var blockers := PackedFloat64Array()
+	blockers.resize(wood.size() * 10)
+	offset = 0
+	for piece in wood:
+		blockers[offset] = piece.id
+		blockers[offset + 1] = piece.at.x
+		blockers[offset + 2] = piece.height
+		blockers[offset + 3] = piece.at.y
+		blockers[offset + 4] = piece.heat_axis.x
+		blockers[offset + 5] = piece.heat_axis.y
+		blockers[offset + 6] = piece.heat_axis.z
+		blockers[offset + 7] = piece.radius
+		blockers[offset + 8] = float(not piece.fibre and not piece.airborne)
+		blockers[offset + 9] = float(piece.pose != null and not piece.airborne)
+		offset += 10
+	var pairs: PackedFloat64Array = ClassDB.class_call_static(Native.KERNEL, &"candidate_pairs", _candidate_geometry())
+	var built: PackedFloat64Array = ClassDB.class_call_static(Native.KERNEL, &"build_network", geometry, blockers, pairs)
+	var link_start := 1 + 2 * nodes.size()
+	if built.size() < link_start or (built.size() - link_start) % EXCHANGE_LINK_WIDTH != 0:
+		return false
+	packed_topology = true
+	network_candidates = pairs.size() / 2
+	packed_radiant_count = int(built[0])
+	crowding = built.slice(1, 1 + nodes.size())
+	starter_ventilation = built.slice(1 + nodes.size(), link_start)
+	exchange_links = built.slice(link_start)
+	exchange_fibre.clear()
+	exchange_bed.clear()
+	for index in range(0, exchange_links.size(), EXCHANGE_LINK_WIDTH):
+		var a := nodes[int(exchange_links[index])]
+		var b := nodes[int(exchange_links[index + 1])]
+		if a.fibre or b.fibre:
+			exchange_fibre.append(_unpack_link(index))
+		if a.kind < 0 and b.kind < 0:
+			exchange_bed.append(_unpack_link(index))
+	return true
+
+func thermal_link_count() -> int:
+	return exchange_links.size() / EXCHANGE_LINK_WIDTH if packed_topology else _links.size()
+
+func thermal_radiant_count() -> int:
+	return packed_radiant_count if packed_topology else _radiant_links.size()
+
+func _materialize_links() -> void:
+	# Story saves and the reference exchange use the same Link representation.
+	if not packed_topology or not _links.is_empty():
+		return
+	for offset in range(0, exchange_links.size(), EXCHANGE_LINK_WIDTH):
+		var link := _unpack_link(offset)
+		_links.append(link)
+		if link.view_a > 0.0 or link.view_b > 0.0:
+			_radiant_links.append(link)
+
+func _unpack_link(offset: int) -> Link:
+	var link := Link.new()
+	link.a = int(exchange_links[offset])
+	link.b = int(exchange_links[offset + 1])
+	link.conductance = exchange_links[offset + 2]
+	link.proximity = exchange_links[offset + 3]
+	link.delta = Vector2(exchange_links[offset + 4], exchange_links[offset + 5])
+	link.receive_a = exchange_links[offset + 6]
+	link.receive_b = exchange_links[offset + 7]
+	link.coal = int(exchange_links[offset + 8])
+	link.toward_wood = Vector2(exchange_links[offset + 9], exchange_links[offset + 10])
+	link.ember_feedback = exchange_links[offset + 11]
+	link.view_a = exchange_links[offset + 12]
+	link.view_b = exchange_links[offset + 13]
+	link.fibre_contact = link.coal >= 0 and (nodes[link.a].fibre or nodes[link.b].fibre)
+	return link
+
+func _network_pair_rows_reference() -> Array[PackedInt32Array]:
+	# The broad phase uses the largest possible reach before orientation
+	# shortens it. Sort survivors by the original node index before exchange.
+	var by_x: Array[int] = []
+	var largest := 0.0
+	for i in nodes.size():
+		by_x.append(i)
+		largest = maxf(largest, nodes[i].size)
+	by_x.sort_custom(func(a, b): return nodes[a].at.x < nodes[b].at.x)
+	var rows: Array[PackedInt32Array] = []
+	rows.resize(nodes.size())
+	for left in range(by_x.size()):
+		var i := by_x[left]
+		var a := nodes[i]
+		var max_reach := maxf(0.36, a.size + largest + 0.17) + 0.00001
+		for right in range(left + 1, by_x.size()):
+			var j := by_x[right]
+			var b := nodes[j]
+			var dx := b.at.x - a.at.x
+			if dx > max_reach:
+				break
+			if (a.owner != 0 and a.owner == b.owner) or absf(a.height - b.height) > 0.83:
+				continue
+			var reach := (0.36 if a.kind < 0 and b.kind < 0 else a.size + b.size + 0.17) + 0.00001
+			if dx > reach or absf(a.at.y - b.at.y) > reach or a.at.distance_squared_to(b.at) > reach * reach:
+				continue
+			rows[mini(i, j)].append(maxi(i, j))
+	for i in rows.size():
+		rows[i].sort()
+	return rows
+
+const RADIATION_CELL := 0.25
+
+func _index_network_occluders() -> void:
+	network_occluders = wood.duplicate()
+	occluder_centers.resize(wood.size())
+	occluder_axes.resize(wood.size())
+	occluder_inverse_axis.resize(wood.size())
+	occluder_radius.resize(wood.size())
+	occluder_lower.resize(wood.size())
+	occluder_upper.resize(wood.size())
+	radiation_cells.clear()
+	airflow_cells.clear()
+	for i in wood.size():
+		var piece := wood[i]
+		var center := _thermal_position(piece)
+		var axis := piece.heat_axis
+		var radius := piece.radius
+		occluder_centers[i] = center
+		occluder_axes[i] = axis
+		occluder_inverse_axis[i] = maxf(0.0001, axis.length_squared())
+		occluder_radius[i] = radius
+		# The ray tests in the network use margins up to 0.012.
+		var extent := axis.abs() + Vector3.ONE * (radius + 0.0121)
+		occluder_lower[i] = center - extent
+		occluder_upper[i] = center + extent
+		if radius < 0.014:
+			continue
+		var first := _radiation_cell(center - extent)
+		var last := _radiation_cell(center + extent)
+		for x in range(first.x, last.x + 1):
+			for y in range(first.y, last.y + 1):
+				var cell := Vector2i(x, y)
+				if radius >= 0.025:
+					radiation_cells.get_or_add(cell, []).append(i)
+				if not piece.fibre and not piece.airborne:
+					airflow_cells.get_or_add(cell, []).append(i)
+
+static func _radiation_cell(point: Vector3) -> Vector2i:
+	return Vector2i(floori(point.x / RADIATION_CELL), floori(point.z / RADIATION_CELL))
 
 func _starter_passage(piece: Piece) -> float:
 	var low_course := false
@@ -1876,21 +2292,44 @@ func _upward_capture(source: Piece, target: Piece) -> float:
 	return (1.0 - smoothstep(0.045, 0.23, drift)) * (1.0 - smoothstep(0.26, 0.48, rise))
 
 func _fuel_ray_open(from: Vector3, to: Vector3, source: Piece, target: Piece, margin: float, minimum_radius := 0.014) -> bool:
-	var middle := from.lerp(to, 0.5)
-	var half_length := from.distance_to(to) * 0.5
-	for piece in wood:
-		if piece.fibre or piece.airborne or piece.radius < minimum_radius or piece == source or piece.id == source.owner \
-				or (target != null and (piece == target or piece.id == target.owner)):
-			continue
-		var axis := piece.heat_axis
-		var center := _thermal_position(piece)
-		var radius := piece.radius + margin
-		if center.distance_squared_to(middle) > pow(half_length + axis.length() + radius, 2.0):
-			continue
-		var points := Geometry3D.get_closest_points_between_segments(from, to, center - axis, center + axis)
-		if points[0].distance_squared_to(points[1]) < radius * radius:
-			return false
+	var lower := from.min(to)
+	var upper := from.max(to)
+	var first := _radiation_cell(lower)
+	var last := _radiation_cell(upper)
+	# A blocker spanning several cells only needs its segment test once.
+	var seen := 0
+	var overflow := {}
+	for x in range(first.x, last.x + 1):
+		for y in range(first.y, last.y + 1):
+			for i: int in airflow_cells.get(Vector2i(x, y), []):
+				if i < 64:
+					var bit := 1 << i
+					if seen & bit:
+						continue
+					seen |= bit
+				else:
+					if overflow.has(i):
+						continue
+					overflow[i] = true
+				if _fuel_ray_blocked(i, from, to, lower, upper, source, target, margin, minimum_radius):
+					return false
 	return true
+
+func _fuel_ray_blocked(i: int, from: Vector3, to: Vector3, lower: Vector3, upper: Vector3,
+		source: Piece, target: Piece, margin: float, minimum_radius: float) -> bool:
+	var low := occluder_lower[i]
+	var high := occluder_upper[i]
+	if low.x > upper.x or low.y > upper.y or low.z > upper.z or high.x < lower.x or high.y < lower.y or high.z < lower.z:
+		return false
+	var piece := network_occluders[i]
+	if occluder_radius[i] < minimum_radius or piece == source or piece.id == source.owner \
+			or (target != null and (piece == target or piece.id == target.owner)):
+		return false
+	var axis := occluder_axes[i]
+	var center := occluder_centers[i]
+	var radius := occluder_radius[i] + margin
+	var points := Geometry3D.get_closest_points_between_segments(from, to, center - axis, center + axis)
+	return points[0].distance_squared_to(points[1]) < radius * radius
 
 func _thermal_position(piece: Piece) -> Vector3:
 	return Vector3(piece.at.x, piece.height, piece.at.y)
@@ -1902,27 +2341,18 @@ func _facing(piece: Piece, direction: Vector3) -> float:
 		return 1.0
 	return 0.28 + 0.72 * maxf(0.0, direction.y * piece.layer)
 
-func _view_weight(source: Piece, receiver: Piece, offset: Vector3, visibility: float) -> float:
-	var toward := offset.normalized()
-	var toward_source := -toward
-	var area := _surface(receiver) * 0.078
-	var span := receiver.heat_axis
-	var nearest := offset - span * clampf(offset.dot(span) / maxf(0.0001, span.length_squared()), -0.85, 0.85)
-	var cap := 0.56 * receiver.original / float(SPECIES[receiver.kind].mass) if receiver.fibre else 0.56
-	var interception := minf(cap, area * 0.52 / (0.010 + nearest.length_squared()))
-	return interception * visibility * _facing(source, toward) * _facing(receiver, toward_source)
-
 func _radiation_visibility(from: Vector3, to: Vector3, a: Piece, b: Piece) -> float:
 	if from.distance_squared_to(to) < 0.012:
 		return 1.0
 	var middle := from.lerp(to, 0.5)
-	for piece in wood:
-		if piece.id == a.id or piece.id == b.id or piece.id == a.owner or piece.id == b.owner or piece.radius < 0.025:
+	for i in radiation_cells.get(_radiation_cell(middle), []):
+		var piece := network_occluders[i]
+		if piece.id == a.id or piece.id == b.id or piece.id == a.owner or piece.id == b.owner:
 			continue
-		var axis := piece.heat_axis
-		var offset := middle - _thermal_position(piece)
-		var across := offset - axis * clampf(offset.dot(axis) / maxf(0.0001, axis.length_squared()), -1.0, 1.0)
-		if across.length_squared() < piece.radius * piece.radius:
+		var axis := occluder_axes[i]
+		var offset := middle - occluder_centers[i]
+		var across := offset - axis * clampf(offset.dot(axis) / occluder_inverse_axis[i], -1.0, 1.0)
+		if across.length_squared() < occluder_radius[i] * occluder_radius[i]:
 			return 0.16
 	return 1.0
 
@@ -2036,43 +2466,21 @@ func step(dt := STEP) -> void:
 		var owner := piece.owner if piece.owner > 0 else piece.id
 		piece.draft = background_wind(piece.at, piece.height, owner) + directed
 
-	for link in links:
-		var i := link.a
-		var j := link.b
-		var a := nodes[i]
-		var b := nodes[j]
-		var insulation := insulations[i] * insulations[j]
-		if a.kind < 0 and b.kind < 0:
-			var overlap := exp(-link.delta.length_squared() / 0.035) / 0.095
-			a.bed_shelter += b.char_mass * overlap
-			b.bed_shelter += a.char_mass * overlap
-		if a.fibre:
-			_fibre_fill(a, b)
-		if b.fibre:
-			_fibre_fill(b, a)
-		var exchange := link.conductance * insulation * _exchange_capacity(a, b, capacities[i], capacities[j])
-		if link.coal >= 0 and not breaths.is_empty():
-			var coal := nodes[link.coal]
-			if coal.pulse > 0.12:
-				# A jet can carry heat into tinder immediately downstream of coals.
-				var aligned := coal.draft.normalized().dot(link.toward_wood)
-				exchange *= 1.0 + smoothstep(0.12, 0.65, coal.pulse) * (0.28 + 0.72 * maxf(0.0, aligned))
-		var heat := exchange * (b.temperature - a.temperature)
-		a.conduction += heat
-		b.conduction -= heat
-		changes[i] += heat
-		changes[j] -= heat
-		if link.ember_feedback > 0.0:
-			var fuel_index := j if link.coal == i else i
-			nodes[fuel_index].plume_heat += ember_heat[link.coal] * link.ember_feedback * insulation
-		var power_a := a.flame + a.smolder * 0.50
-		var power_b := b.flame + b.smolder * 0.50
-		if power_a > 0.0:
-			var lean := link.delta.dot(a.draft.limit_length(1.8)) * 0.18
-			b.plume_heat += power_a * maxf(0.0, link.proximity + lean) * link.receive_b * insulation
-		if power_b > 0.0:
-			var lean := link.delta.dot(b.draft.limit_length(1.8)) * 0.18
-			a.plume_heat += power_b * maxf(0.0, link.proximity - lean) * link.receive_a * insulation
+	var native_exchange := Native.enabled and (packed_topology or _links.size() >= 64)
+	if native_exchange:
+		if exchange_links.is_empty():
+			_pack_exchange_links()
+		for link in exchange_bed:
+			_bed_overlap(link, nodes[link.a], nodes[link.b])
+		for link in exchange_fibre:
+			var a := nodes[link.a]
+			var b := nodes[link.b]
+			if a.fibre:
+				_fibre_fill(a, b)
+			if b.fibre:
+				_fibre_fill(b, a)
+	else:
+		_exchange_links_reference()
 
 	radiated = 0.0
 	absorbed = 0.0
@@ -2090,18 +2498,10 @@ func step(dt := STEP) -> void:
 		p.convection_loss = room_loss - p.radiation_out
 		p.flame_radiation = p.flame * 0.18
 		radiated += p.radiation_out + p.flame_radiation
-	for link in radiant_links:
-		var a := nodes[link.a]
-		var b := nodes[link.b]
-		var power_a := a.radiation_out + a.flame_radiation
-		var power_b := b.radiation_out + b.flame_radiation
-		if power_a == 0.0 and power_b == 0.0:
-			continue
-		var from_a := power_a * link.view_a * insulations[link.b]
-		var from_b := power_b * link.view_b * insulations[link.a]
-		a.radiation_in += from_b
-		b.radiation_in += from_a
-		absorbed += from_a + from_b
+	if native_exchange:
+		_exchange_links_native()
+	else:
+		_radiation_reference()
 
 	var oxygen_used := 0.0
 	for i in range(nodes.size()):
@@ -2208,6 +2608,137 @@ func step(dt := STEP) -> void:
 	_step_tinder_work(dt)
 	revision += 1
 
+func _bed_overlap(link: Link, a: Piece, b: Piece) -> void:
+	var overlap := exp(-link.delta.length_squared() / 0.035) / 0.095
+	a.bed_shelter += b.char_mass * overlap
+	b.bed_shelter += a.char_mass * overlap
+
+func _pack_exchange_links() -> void:
+	exchange_links.resize(links.size() * 15)
+	exchange_fibre.clear()
+	exchange_bed.clear()
+	var offset := 0
+	for link in links:
+		var a := nodes[link.a]
+		var b := nodes[link.b]
+		if a.fibre or b.fibre:
+			exchange_fibre.append(link)
+		if a.kind < 0 and b.kind < 0:
+			exchange_bed.append(link)
+		exchange_links[offset] = link.a
+		exchange_links[offset + 1] = link.b
+		exchange_links[offset + 2] = link.conductance
+		exchange_links[offset + 3] = link.proximity
+		exchange_links[offset + 4] = link.delta.x
+		exchange_links[offset + 5] = link.delta.y
+		exchange_links[offset + 6] = link.receive_a
+		exchange_links[offset + 7] = link.receive_b
+		exchange_links[offset + 8] = link.coal
+		exchange_links[offset + 9] = link.toward_wood.x
+		exchange_links[offset + 10] = link.toward_wood.y
+		exchange_links[offset + 11] = link.ember_feedback
+		exchange_links[offset + 12] = link.view_a
+		exchange_links[offset + 13] = link.view_b
+		offset += 15
+
+func _exchange_links_native() -> void:
+	exchange_nodes.resize(nodes.size() * 13)
+	var offset := 0
+	for i in nodes.size():
+		var piece := nodes[i]
+		var wind := piece.draft.limit_length(1.8)
+		var breath := Vector2.ZERO
+		var strength := 0.0
+		if piece.kind < 0 and not breaths.is_empty() and piece.pulse > 0.12:
+			breath = piece.draft.normalized()
+			strength = smoothstep(0.12, 0.65, piece.pulse)
+		exchange_nodes[offset] = piece.temperature
+		exchange_nodes[offset + 1] = capacities[i]
+		exchange_nodes[offset + 2] = insulations[i]
+		exchange_nodes[offset + 3] = piece.flame + piece.smolder * 0.50
+		exchange_nodes[offset + 4] = piece.radiation_out + piece.flame_radiation
+		exchange_nodes[offset + 5] = ember_heat[i] if piece.kind < 0 else 0.0
+		exchange_nodes[offset + 6] = piece.char_mass
+		exchange_nodes[offset + 7] = wind.x
+		exchange_nodes[offset + 8] = wind.y
+		exchange_nodes[offset + 9] = breath.x
+		exchange_nodes[offset + 10] = breath.y
+		exchange_nodes[offset + 11] = strength
+		exchange_nodes[offset + 12] = float(piece.fibre)
+		offset += 13
+	var result: PackedFloat64Array = ClassDB.class_call_static(Native.KERNEL, &"exchange", exchange_nodes, exchange_links)
+	if result.size() != nodes.size() * 4 + 1:
+		push_error("Firetender bridge rejected its thermal buffers. Continuing with the reference exchange.")
+		for piece in nodes:
+			piece.bed_shelter = 0.0
+			piece.fibre_shelter = 0.0
+			piece.pore_density = 0.0
+			if piece.fibre:
+				_fibre_fill(piece, piece)
+		_exchange_links_reference()
+		_radiation_reference()
+		Native.enabled = false
+		return
+	for i in nodes.size():
+		var piece := nodes[i]
+		var read := i * 4
+		changes[i] = result[read]
+		piece.conduction = result[read]
+		piece.plume_heat = result[read + 1]
+		piece.radiation_in = result[read + 2]
+	absorbed = result[-1]
+
+func _exchange_links_reference() -> void:
+	for link in links:
+		var i := link.a
+		var j := link.b
+		var a := nodes[i]
+		var b := nodes[j]
+		var insulation := insulations[i] * insulations[j]
+		if a.kind < 0 and b.kind < 0:
+			_bed_overlap(link, a, b)
+		if a.fibre:
+			_fibre_fill(a, b)
+		if b.fibre:
+			_fibre_fill(b, a)
+		var exchange := link.conductance * insulation * _exchange_capacity(a, b, capacities[i], capacities[j])
+		if link.coal >= 0 and not breaths.is_empty():
+			var coal := nodes[link.coal]
+			if coal.pulse > 0.12:
+				# A jet can carry heat into tinder immediately downstream of coals.
+				var aligned := coal.draft.normalized().dot(link.toward_wood)
+				exchange *= 1.0 + smoothstep(0.12, 0.65, coal.pulse) * (0.28 + 0.72 * maxf(0.0, aligned))
+		var heat := exchange * (b.temperature - a.temperature)
+		a.conduction += heat
+		b.conduction -= heat
+		changes[i] += heat
+		changes[j] -= heat
+		if link.ember_feedback > 0.0:
+			var fuel_index := j if link.coal == i else i
+			nodes[fuel_index].plume_heat += ember_heat[link.coal] * link.ember_feedback * insulation
+		var power_a := a.flame + a.smolder * 0.50
+		var power_b := b.flame + b.smolder * 0.50
+		if power_a > 0.0:
+			var lean := link.delta.dot(a.draft.limit_length(1.8)) * 0.18
+			b.plume_heat += power_a * maxf(0.0, link.proximity + lean) * link.receive_b * insulation
+		if power_b > 0.0:
+			var lean := link.delta.dot(b.draft.limit_length(1.8)) * 0.18
+			a.plume_heat += power_b * maxf(0.0, link.proximity - lean) * link.receive_a * insulation
+
+func _radiation_reference() -> void:
+	for link in radiant_links:
+		var a := nodes[link.a]
+		var b := nodes[link.b]
+		var power_a := a.radiation_out + a.flame_radiation
+		var power_b := b.radiation_out + b.flame_radiation
+		if power_a == 0.0 and power_b == 0.0:
+			continue
+		var from_a := power_a * link.view_a * insulations[link.b]
+		var from_b := power_b * link.view_b * insulations[link.a]
+		a.radiation_in += from_b
+		b.radiation_in += from_a
+		absorbed += from_a + from_b
+
 func _near_hot_fuel(piece: Piece) -> bool:
 	for source in coals:
 		if source.temperature > 100.0 and piece.at.distance_squared_to(source.at) < pow(piece.size + source.size + 0.65, 2.0):
@@ -2236,18 +2767,25 @@ func _refresh_storage_membership() -> void:
 			stored.remove_at(i)
 			wood.append(piece)
 			network_dirty = true
+			_invalidate_wind_stock()
 	for i in range(wood.size() - 1, -1, -1):
 		var piece := wood[i]
 		if not in_hearth(piece.at) and _quiet_stock(piece) and not _near_hot_fuel(piece):
 			wood.remove_at(i)
 			stored.append(piece)
 			network_dirty = true
+			_invalidate_wind_stock()
 
 func _weather_storage(elapsed: float) -> void:
 	# The remote pile has no combustion links. Catch rain on the same fuel
 	# surfaces and let its temperature follow the air until it approaches heat.
 	var room := ambient()
 	var drift := 1.0 - exp(-elapsed * 0.06)
+	var shelf_sections: Array[Piece] = []
+	if shelter.after_storm:
+		for piece in stored:
+			if not piece.sections.is_empty():
+				shelf_sections.append(piece)
 	for piece in stored:
 		var local_room := shelter.air_temperature(piece.at) if shelter.after_storm else room
 		var air := wind_at(piece.at).length() if shelter.after_storm else 0.0
@@ -2257,8 +2795,8 @@ func _weather_storage(elapsed: float) -> void:
 		var shelf_air := 0.0
 		if shelter.after_storm and not piece.sections.is_empty() and Shelter.DRY_SHELF.has_point(piece.at):
 			shelf_air = 1.0
-			for neighbor in stored:
-				if neighbor != piece and not neighbor.sections.is_empty() and piece.at.distance_squared_to(neighbor.at) < 0.20 * 0.20:
+			for neighbor in shelf_sections:
+				if neighbor != piece and piece.at.distance_squared_to(neighbor.at) < 0.20 * 0.20:
 					shelf_air = 0.35
 					break
 			local_drift = maxf(local_drift, 1.0 - exp(-elapsed * 0.17 * shelf_air))
@@ -2266,28 +2804,48 @@ func _weather_storage(elapsed: float) -> void:
 			_idle_surface(piece, local_room, local_drift, elapsed, air)
 		else:
 			for section in piece.sections:
-				for face in section.faces:
-					_idle_surface(face, local_room, local_drift, elapsed, air, shelf_air)
-				for part in section.inner + [section.core]:
+				var face := section.faces[0]
+				var wetting := rain_at(face.at)
+				var humidity := 0.0
+				if shelter.after_storm:
+					wetting += shelter.seepage_at(face.at)
+					humidity = shelter.humidity(face.at)
+				_weather_surface(face, local_room, local_drift, elapsed, air, shelf_air, wetting, humidity)
+				var underside := section.faces[1]
+				# Air and rain are sampled in plan coordinates. The two
+				# faces normally share them, including when one is turned.
+				if underside.at == face.at:
+					_weather_surface(underside, local_room, local_drift, elapsed, air, shelf_air, wetting, humidity)
+				else:
+					_idle_surface(underside, local_room, local_drift, elapsed, air, shelf_air)
+				for part in section.inner:
 					part.temperature = lerpf(part.temperature, local_room, local_drift * 0.32)
+				section.core.temperature = lerpf(section.core.temperature, local_room, local_drift * 0.32)
 				if shelter.after_storm:
 					_diffuse_to_faces(section, elapsed)
 			_sync_sections(piece)
 
 func _idle_surface(piece: Piece, room: float, drift: float, elapsed: float, air: float, shelf_air := 0.0) -> void:
-	piece.temperature = lerpf(piece.temperature, room, drift)
 	var wetting := rain_at(piece.at)
+	var humidity := 0.0
 	if shelter.after_storm:
 		wetting += shelter.seepage_at(piece.at)
+		humidity = shelter.humidity(piece.at)
+	_weather_surface(piece, room, drift, elapsed, air, shelf_air, wetting, humidity)
+
+func _weather_surface(piece: Piece, room: float, drift: float, elapsed: float, air: float, shelf_air: float,
+		wetting: float, humidity: float) -> void:
+	piece.temperature = lerpf(piece.temperature, room, drift)
+	var area := _surface(piece)
 	if piece.layer >= 0:
-		var incoming := _caught_rain(piece, _surface(piece), wetting, elapsed, 1.0)
+		var incoming := _caught_rain(piece, area, wetting, elapsed, 1.0)
 		piece.water += incoming
 		if shelter.after_storm:
 			received_water += incoming
 			piece.temperature += (room - piece.temperature) * incoming * 4.18 / piece.capacity()
 	if shelter.after_storm:
 		var capacity := piece.capacity()
-		var evaporated := _moisture_loss(piece, _surface(piece) * (1.0 + 0.13 * shelf_air), room, air, elapsed, capacity)
+		var evaporated := _moisture_loss(piece, area * (1.0 + 0.13 * shelf_air), room, air, elapsed, capacity, humidity)
 		piece.vapor = evaporated / elapsed
 		piece.water -= evaporated
 		piece.temperature -= evaporated * 2260.0 / capacity
@@ -2296,8 +2854,7 @@ func _idle_surface(piece: Piece, room: float, drift: float, elapsed: float, air:
 func _caught_rain(piece: Piece, surface: float, rain: float, dt: float, insulation: float) -> float:
 	return minf(dt * rain * surface * 0.00072 * insulation, maxf(0.0, piece.original * piece.moisture_capacity - piece.water))
 
-func _moisture_loss(piece: Piece, area: float, room: float, air: float, dt: float, capacity: float) -> float:
-	var humidity := shelter.humidity(piece.at)
+func _moisture_loss(piece: Piece, area: float, room: float, air: float, dt: float, capacity: float, humidity: float) -> float:
 	var warm := maxf(0.0, piece.temperature - room)
 	var equilibrium := lerpf(0.055, 0.24, humidity) * exp(-warm * 0.012)
 	var available := maxf(0.0, piece.water - piece.wood * equilibrium)
@@ -2684,6 +3241,8 @@ func _deposit(at: Vector2, carbon: float, mineral: float, water: float, heat: fl
 func _mix(coal: Piece, carbon: float, mineral: float, water: float, cover: float, base: float, heat: float,
 		density := 225.0, pores := 0.45, oxidation := 1.0) -> void:
 	var old_capacity := coal.capacity()
+	var old_surface := _surface(coal)
+	var old_contact := clampf(coal.char_mass, 0.018, 0.061)
 	if carbon > 0.0:
 		coal.oxidation_factor = lerpf(coal.oxidation_factor, oxidation, carbon / (coal.char_mass + carbon))
 		var solid_volume := coal.char_mass / coal.char_density + carbon / density
@@ -2696,6 +3255,11 @@ func _mix(coal: Piece, carbon: float, mineral: float, water: float, cover: float
 	coal.cover += cover
 	coal.base_capacity += base
 	coal.temperature += (heat - coal.temperature) * (coal.capacity() - old_capacity) / coal.capacity()
+	# Link construction samples ember surface area, coal contact strength and
+	# fibre normalization. Mixing residue can change them without moving a node.
+	if _surface(coal) != old_surface or clampf(coal.char_mass, 0.018, 0.061) != old_contact \
+			or (old_capacity != coal.capacity() and _network_has_fibre()):
+		network_dirty = true
 
 func _compact_bed() -> void:
 	var a := 0
@@ -2755,7 +3319,7 @@ func _react(p: Piece, transferred: float, crowd: float, room: float, rain: float
 	var water_budget := maxf(0.0, (t - 44.0) * capacity / 2260.0)
 	var evaporated := minf(water_demand, water_budget)
 	if after_storm:
-		evaporated = _moisture_loss(p, surface * (1.0 - 0.42 * smoothstep(0.12, 1.6, crowd)), room, air, dt, capacity)
+		evaporated = _moisture_loss(p, surface * (1.0 - 0.42 * smoothstep(0.12, 1.6, crowd)), room, air, dt, capacity, shelter.humidity(p.at))
 		evaporated_water += evaporated
 	p.water -= evaporated
 	p.vapor = evaporated / dt
@@ -2993,6 +3557,7 @@ func _spark_hit(fragment: Spark, fuel: Array[Piece], start: Vector3, end: Vector
 			stored.erase(fragment.receiver)
 			wood.append(fragment.receiver)
 			network_dirty = true
+			_invalidate_wind_stock()
 
 func _warm_spark_contact(fragment: Spark, dt: float, room: float) -> void:
 	if not has_fuel(fragment.receiver):

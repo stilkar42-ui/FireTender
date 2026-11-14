@@ -75,7 +75,10 @@ func _travel_and_saves() -> void:
 	_check(story.picked_up and not story.land.places.has(Land.WOODS) and not story.trip_observation.is_empty(),
 		"Rusk’s observations stay private on the return leg")
 	var restored := Chapter.new(Chapter.Fire.new())
-	_check(Save.restore(restored, Save.capture(story)) and restored.gathering.records == story.gathering.records
+	var saved := Save.capture(story)
+	_check(not saved.fire.has("seat_cache") and not saved.fire.has("network_occluders") and not saved.fire.has("radiation_cells"),
+		"Save data excludes derived support and thermal caches")
+	_check(Save.restore(restored, bytes_to_var(var_to_bytes(saved))) and restored.gathering.records == story.gathering.records
 		and restored.gathering.events == story.gathering.events and restored.trip_observation == story.trip_observation,
 		"Saving on the return leg preserves the event, field stock and private report")
 	_step(restored, restored.returns_at + 0.25)

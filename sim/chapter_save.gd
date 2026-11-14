@@ -9,7 +9,12 @@ const Mentor := preload("res://sim/mentor.gd")
 const VERSION := 4
 const MAX_BYTES := 24 * 1024 * 1024
 const FIRE_SKIP := ["wood", "stored", "coals", "sparks", "breaths", "falling", "cells", "shelter", "smoke_field",
-	"nodes", "links", "radiant_links", "fuel_stock"]
+	"nodes", "links", "radiant_links", "fuel_stock", "network_geometry", "network_material",
+	"_links", "_radiant_links", "packed_topology", "packed_radiant_count",
+	"seat_cache", "support_geometry", "support_geometry_serial", "network_candidates", "network_occluders",
+	"occluder_centers", "occluder_axes", "occluder_inverse_axis", "occluder_radius",
+	"occluder_lower", "occluder_upper", "radiation_cells", "airflow_cells", "wind_stock_cells", "wind_stock_indexed",
+	"exchange_links", "exchange_nodes", "exchange_fibre", "exchange_bed"]
 const PIECE_SKIP := ["sections", "faces", "inner", "core", "pose"]
 const WORK_SKIP := ["fire", "parcels", "roast", "resin", "lessons", "techniques"]
 const FAMILY_SKIP := ["fire", "weather", "workshop", "rng", "land", "craft", "stormfall"]
@@ -340,6 +345,17 @@ static func _piece(piece: Fire.Piece, indices: Dictionary) -> Dictionary:
 static func _restore_fire(fire: Fire, data: Dictionary) -> bool:
 	if not _put(fire, data, FIRE_SKIP) or not data.get("smoke") is Dictionary:
 		return false
+	fire.seat_cache.clear()
+	fire.support_geometry.clear()
+	fire.support_geometry_serial = 0
+	fire.network_candidates = 0
+	fire.network_occluders.clear()
+	fire.exchange_links.clear()
+	fire.exchange_nodes.clear()
+	fire.exchange_bed.clear()
+	fire.exchange_fibre.clear()
+	fire.packed_topology = false
+	fire.packed_radiant_count = 0
 	var indices := {}
 	for group: String in ["wood", "stored", "coals"]:
 		var result: Variant = _parts(data.get(group), indices, 0)
@@ -381,6 +397,9 @@ static func _restore_fire(fire: Fire, data: Dictionary) -> bool:
 	fire.radiant_links.clear()
 	if not fire.network_dirty and not _restore_topology(fire, data, indices):
 		return false
+	if not fire.network_dirty:
+		fire.network_geometry = fire._network_geometry()
+		fire.network_material = fire._network_material()
 	return true
 
 static func _restore_topology(fire: Fire, data: Dictionary, indices: Dictionary) -> bool:

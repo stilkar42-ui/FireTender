@@ -5,6 +5,7 @@ extends RefCounted
 const MAX_SLOPE := 1.45
 const SAMPLES := [-1.0, -0.67, -0.33, 0.0, 0.33, 0.67, 1.0]
 const TOUCH := 0.016
+const Native := preload("res://sim/native_fire.gd")
 
 class Pose:
 	var at := Vector2.ZERO
@@ -49,6 +50,8 @@ static func _fit(at: Vector2, axis: Vector2, length: float, thickness: float, pr
 	var floors := PackedFloat64Array()
 	var ids := PackedInt32Array()
 	var offsets := PackedFloat64Array()
+	var samples := PackedFloat64Array()
+	var native_contacts := Native.enabled and below.size() >= 8
 	var balance: float = body.centre_of_mass * length if body != null and precise else 0.0
 	for fraction: float in SAMPLES:
 		offsets.append(length * fraction)
@@ -84,9 +87,19 @@ static func _fit(at: Vector2, axis: Vector2, length: float, thickness: float, pr
 			if ridge > height:
 				height = ridge
 				support = -coal.id
+		if native_contacts:
+			var limit := INF if ceiling == null else ceiling.point(along).z + 0.003
+			samples.append_array(PackedFloat64Array([plan.x, plan.y, underside, height, support, limit]))
+			continue
 		for piece in below:
 			var distance: float = clampf((plan - piece.at).dot(piece.axis), -piece.pose.span, piece.pose.span)
-			var gap: float = plan.distance_to(piece.at + piece.axis * distance)
+			var nearest: Vector2 = piece.at + piece.axis * distance
+			# The owning log's radius bounds every section crown. Reject
+			# separated supports before resolving the section and its strength.
+			var max_width: float = (underside + maxf(piece.radius, piece.upper_radius)) * 0.91 + 0.000001
+			if plan.distance_squared_to(nearest) > max_width * max_width:
+				continue
+			var gap := plan.distance_to(nearest)
 			var region = piece.cross_section(distance / piece.pose.span)
 			var crown: float = region.upper_radius
 			if region.integrity < 0.10 or region.crushed:
@@ -105,8 +118,62 @@ static func _fit(at: Vector2, axis: Vector2, length: float, thickness: float, pr
 		floors.append(height)
 		grounds.append(height + underside)
 		ids.append(support)
+	if native_contacts:
+		var contacts := _support_floors(samples, below)
+		if contacts.size() != offsets.size() * 2:
+			push_error("Firetender bridge rejected support geometry. Continuing with the reference fit.")
+			Native.enabled = false
+			return _fit(at, axis, length, thickness, preferred, below, coals, precise, body, ceiling)
+		for i in offsets.size():
+			var height := contacts[2 * i]
+			floors.append(height)
+			grounds.append(height + samples[i * 6 + 2])
+			ids.append(int(contacts[2 * i + 1]))
 
 	var desired := clampf(preferred, -MAX_SLOPE, MAX_SLOPE)
+	# Always retain the reference for small fits and unsupported platforms.
+	# Contact sampling and contact selection stay in the original order.
+	var solution := PackedFloat64Array()
+	if Native.enabled and offsets.size() >= 10:
+		var heights := PackedFloat64Array()
+		heights.resize(offsets.size() * 2)
+		for i in offsets.size():
+			heights[i * 2] = offsets[i]
+			heights[i * 2 + 1] = grounds[i]
+		solution = ClassDB.class_call_static(Native.KERNEL, &"fit", heights, desired, balance, length)
+	if solution.size() == 2:
+		pose.slope = solution[0]
+		pose.height = solution[1]
+	else:
+		_score_reference(offsets, grounds, desired, balance, length, pose)
+	for i in range(offsets.size()):
+		if pose.height + offsets[i] * pose.slope - grounds[i] <= TOUCH:
+			var plan := at + axis * offsets[i]
+			pose.contacts.append(Vector3(plan.x, plan.y, floors[i]))
+			pose.contact_ids.append(ids[i])
+			if not ids[i] in pose.supports:
+				pose.supports.append(ids[i])
+	return pose
+
+static func _support_floors(samples: PackedFloat64Array, below: Array) -> PackedFloat64Array:
+	var supports := PackedFloat64Array()
+	for piece in below:
+		var pose: Pose = piece.pose
+		var count := maxi(1, piece.sections.size())
+		supports.append_array(PackedFloat64Array([
+			piece.id, piece.at.x, piece.at.y, piece.axis.x, piece.axis.y, pose.span, pose.height, pose.slope, count
+		]))
+		if piece.sections.is_empty():
+			supports.append(piece.upper_radius)
+			supports.append(float(piece.integrity >= 0.10 and not piece.crushed))
+		else:
+			for region in piece.sections:
+				supports.append(region.upper_radius)
+				supports.append(float(region.integrity >= 0.10 and not region.crushed))
+	return ClassDB.class_call_static(Native.KERNEL, &"support_floors", samples, supports)
+
+static func _score_reference(offsets: PackedFloat64Array, grounds: PackedFloat64Array,
+		desired: float, balance: float, length: float, pose: Pose) -> void:
 	var slopes := PackedFloat64Array([desired, 0.0, -MAX_SLOPE, MAX_SLOPE])
 	for left in range(offsets.size() - 1):
 		if offsets[left] > balance:
@@ -134,14 +201,6 @@ static func _fit(at: Vector2, axis: Vector2, length: float, thickness: float, pr
 			best = score
 			pose.slope = slope
 			pose.height = bottom
-	for i in range(offsets.size()):
-		if pose.height + offsets[i] * pose.slope - grounds[i] <= TOUCH:
-			var plan := at + axis * offsets[i]
-			pose.contacts.append(Vector3(plan.x, plan.y, floors[i]))
-			pose.contact_ids.append(ids[i])
-			if not ids[i] in pose.supports:
-				pose.supports.append(ids[i])
-	return pose
 
 static func _add_sample(offsets: PackedFloat64Array, along: float) -> void:
 	for existing in offsets:
