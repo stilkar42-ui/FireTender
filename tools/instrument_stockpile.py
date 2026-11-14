@@ -33,10 +33,11 @@ def wrappers(root, name, methods):
             body.append("\treturn result")
         elif name == "_prepare_network":
             body.extend([
-                '	Probe.rebuilt(probe_at, nodes.size(), links.size())',
+                '	var accepted: int = call("thermal_link_count") if has_method("thermal_link_count") else links.size()',
+                '	Probe.rebuilt(probe_at, nodes.size(), accepted)',
                 '\tProbe.count("candidate_pairs", nodes.size() * (nodes.size() - 1) / 2)',
                 '\tProbe.count("narrow_candidates", get("network_candidates") if "network_candidates" in self else nodes.size() * (nodes.size() - 1) / 2)',
-                '\tProbe.count("accepted_links", links.size())',
+                '\tProbe.count("accepted_links", accepted)',
             ])
         lines[start : end + 1] = [
             *body, "", signature[0].replace(f"func {name}(", f"func _bench{name}("), *signature[1:]
@@ -50,6 +51,7 @@ def instrument(root):
     (root / "tools/stockpile_probe.gd").write_bytes(template.read_bytes())
     optimized_network = "func _network_pair_rows(" in (root / "sim/fire.gd").read_text(encoding="utf-8")
     architecture = "func _exchange_links_native(" in (root / "sim/fire.gd").read_text(encoding="utf-8")
+    packed_topology = "func _build_network_native(" in (root / "sim/fire.gd").read_text(encoding="utf-8")
     fire_methods = [
         ("step", "dt", False), ("_prepare_network", "", False), ("_settle", "gravity, fall_step, moved_piece", False),
         ("_refresh_storage_membership", "", False), ("_weather_storage", "elapsed", False),
@@ -66,7 +68,9 @@ def instrument(root):
         ("_ambient_effects", "", False), ("_wood_mesh", "left, center, right, wear, seed, slice, start, end, split", True),
         ("hit", "screen, ignored, logs_only", True),
     ])
-    wrappers(root, "hearth/lab.gd", [("_step_budgeted", "ticks", True), ("_update_chapter", "", False)])
+    wrappers(root, "hearth/lab.gd", [("_process", "delta", False),
+                                    ("_step_budgeted", "ticks", True), ("_update_chapter", "", False)])
+    wrappers(root, "hearth/fire_audio.gd", [("_process", "_delta", False)])
     wrappers(root, "hearth/family_props.gd", [("show_workshop", "workshop, household", False)])
     edit(root, "hearth/construction_3d.gd", [
         ("var interval := 0.0\n\tif multiplier", "if Probe.force_reduced and multiplier < 16:\n\t\tmultiplier = 64\n\tvar interval := 0.0\n\tif multiplier"),
@@ -87,10 +91,13 @@ def instrument(root):
         ("if a.owner != 0 and a.owner == b.owner:\n\t\t\t\tcontinue", "if a.owner != 0 and a.owner == b.owner:\n\t\t\t\trejected += 1\n\t\t\t\trejected_usec += Time.get_ticks_usec() - candidate_at\n\t\t\t\tcontinue"),
         ("if distance >= reach or gap > 0.83:\n\t\t\t\tcontinue", "if distance >= reach or gap > 0.83:\n\t\t\t\trejected += 1\n\t\t\t\trejected_usec += Time.get_ticks_usec() - candidate_at\n\t\t\t\tcontinue"),
         ("var visibility := _radiation_visibility(from, to, a, b) if geometry else 0.20", "var visibility_start := Probe.start()\n\t\t\t\tvar visibility := _radiation_visibility(from, to, a, b) if geometry else 0.20\n\t\t\t\tvisibility_usec += Time.get_ticks_usec() - visibility_start\n\t\t\t\tvisibility_calls += 1"),
-        ("\t\t\tlinks.append(link)\n\tfor link in links:", '\t\t\tlinks.append(link)\n\tProbe.end("network.pairs", pair_start)\n\tProbe.add("network.rejections", rejected_usec, rejected)\n\tProbe.add("network.visibility", visibility_usec, visibility_calls)\n\tfor link in links:'),
+        (f'\t\t\t{("_" if packed_topology else "")}links.append(link)\n\tfor link in {("_" if packed_topology else "")}links:',
+         f'\t\t\t{("_" if packed_topology else "")}links.append(link)\n\tProbe.end("network.pairs", pair_start)\n'
+         '\tProbe.add("network.rejections", rejected_usec, rejected)\n\tProbe.add("network.visibility", visibility_usec, visibility_calls)\n'
+         f'\tfor link in {("_" if packed_topology else "")}links:'),
     ])
     if architecture:
-        instrument_network(root)
+        instrument_network(root, packed_topology)
     if not architecture:
         edit(root, "sim/fire.gd", [
             ("for link in links:\n\t\tvar i", 'var exchange_start := Probe.start()\n\tfor link in links:\n\t\tvar i'),
@@ -100,16 +107,19 @@ def instrument(root):
         ])
 
 
-def instrument_network(root):
+def instrument_network(root, packed_topology):
     changes = []
     for method, reason in (
         ("_new_coal", "coal added"), ("_bench_settle", "structure settled"),
         ("_refresh_storage_membership", "active membership"),
         ("_compact_bed", "coal merged"), ("_spark_hit", "spark receiver promoted"),
+        ("_check_network_geometry", "active geometry"), ("_mix", "coal coefficients"),
     ):
         path = root / "sim/fire.gd"
         source = path.read_text(encoding="utf-8")
-        start = source.index(f"func {method}(")
+        start = source.find(f"func {method}(")
+        if start == -1:
+            continue
         end = source.find("\nfunc ", start + 1)
         block = source[start:end]
         lines = [
@@ -133,9 +143,21 @@ def instrument_network(root):
     timings += section("			# Flames can reach", "			if link.coal >= 0:\n				var fuel", "flame_and_paths", "			")
     timings += section("			if link.coal >= 0:\n				var fuel", "			var from := positions[i]", "ember_feedback", "			")
     timings += section("			var from := positions[i]", "			# The greatest possible", "radiation_and_views", "			")
-    timings += section("			var parallel :=", "			links.append(link)", "crowding", "			")
-    timings += section("	for link in links:\n		# Bound outgoing", "\nfunc _network_pair_rows()", "normalization", "	")
-    timings += section("	starter_ventilation.resize", "	var pair_start := Probe.start()", "starter_ventilation", "	")
+    links = "_links" if packed_topology else "links"
+    timings += section("			var parallel :=", f"			{links}.append(link)", "crowding", "			")
+    timings += section(f"	for link in {links}:\n		# Bound outgoing",
+                       "\nfunc _candidate_geometry()" if packed_topology else "\nfunc _network_pair_rows()",
+                       "normalization", "	")
+    if packed_topology:
+        timings += section("	starter_ventilation.resize", "	_build_network_reference()", "starter_ventilation", "	")
+        timings += section("	var geometry := PackedFloat64Array()\n	geometry.resize(nodes.size() * 28)",
+                           '\tvar pairs: PackedFloat64Array = ClassDB.class_call_static(Native.KERNEL, &"candidate_pairs", _candidate_geometry())\n\tvar built',
+                           "native_input", "	")
+        timings += section("	var built: PackedFloat64Array", "	var link_start :=", "native_construction_call", "	")
+        timings += section("	var pairs: PackedFloat64Array = ClassDB.class_call_static(Native.KERNEL, &\"candidate_pairs\", _candidate_geometry())\n\tvar phase_at_native_construction_call",
+                           "	var phase_at_native_construction_call", "native_candidates", "	")
+    else:
+        timings += section("	starter_ventilation.resize", "	var pair_start := Probe.start()", "starter_ventilation", "	")
     timings += section("		var pairs: PackedFloat64Array = ClassDB", "		if not pairs.is_empty():", "native_candidate_call", "		")
     timings += section("	var result: PackedFloat64Array = ClassDB.class_call_static(Native.KERNEL, &\"exchange\"", "	if result.size() != nodes.size() * 4 + 1:", "native_exchange_call", "	")
     edit(root, "sim/fire.gd", timings)

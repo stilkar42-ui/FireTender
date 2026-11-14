@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory)][string] $Godot,
     [Parameter(Mandatory)][string] $WindowsTemplate,
     [string] $StressSave,
+    [string] $Version = '3.4',
     [string] $Destination = (Join-Path $PSScriptRoot '../outputs/performance-3.4/Playtest')
 )
 
@@ -36,7 +37,7 @@ slot number from 01 through 10 works as well.
 '@
 }
 @"
-FIRETENDER 3.4 | Windows x86-64 playtest
+FIRETENDER $Version | Windows x86-64 playtest
 
 Keep Firetender.exe, Firetender.pck and the native folder together.
 Start Firetender.exe. The game uses the existing Firetender profile

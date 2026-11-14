@@ -5,11 +5,15 @@ static var enabled := false
 static var force_reduced := false
 static var rebuilds: Array[Dictionary] = []
 static var causes := {}
+static var frame_work := {}
+static var slow_frames: Array[Dictionary] = []
 
 static func begin(reduced := false) -> void:
 	data.clear()
 	rebuilds.clear()
 	causes.clear()
+	frame_work.clear()
+	slow_frames.clear()
 	force_reduced = reduced
 	enabled = true
 
@@ -18,7 +22,13 @@ static func finish() -> Dictionary:
 	force_reduced = false
 	var result := data.duplicate(true)
 	result["network.rebuilds"] = rebuilds.duplicate(true)
+	result["slow_frames"] = slow_frames.duplicate(true)
 	return result
+
+static func frame(usec: int, sim_time: float) -> void:
+	if enabled and usec >= 33000:
+		slow_frames.append({"usec": usec, "sim_time": sim_time, "work": frame_work.duplicate()})
+	frame_work.clear()
 
 static func invalidate(reason: String) -> void:
 	if enabled:
@@ -34,7 +44,11 @@ static func start() -> int:
 	return Time.get_ticks_usec()
 
 static func end(label: String, started: int) -> void:
-	add(label, Time.get_ticks_usec() - started, 1)
+	var elapsed := Time.get_ticks_usec() - started
+	add(label, elapsed, 1)
+	if enabled and label in ["lab._process", "fire_audio._process", "lab._step_budgeted",
+			"construction_3d._refresh", "fire._prepare_network"]:
+		frame_work[label] = frame_work.get(label, 0) + elapsed
 
 static func count(label: String, amount: int) -> void:
 	add(label, amount, 1)
