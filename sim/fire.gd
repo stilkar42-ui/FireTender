@@ -1763,6 +1763,8 @@ func sweep_ash(from: Vector2, to: Vector2) -> float:
 	for coal in coals:
 		if not coal.carried and coal.at.distance_to(from) <= 0.22:
 			collected += coal.mineral
+			if coal.mineral > 0.0 and _network_has_fibre():
+				network_dirty = true
 			coal.mineral = 0.0
 	var moved := collected
 	var nearest: Piece

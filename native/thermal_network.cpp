@@ -37,8 +37,28 @@ double smooth(double low, double high, double value) {
     return t * t * (3.0 - 2.0 * t);
 }
 
-// Match Geometry3D's Eberly segment solver, including its parallel branch
-// and endpoint interpolation. See Godot 4.7.2 core/math/geometry_3d.cpp.
+// Segment solver adapted from Godot 4.7.2, core/math/geometry_3d.cpp.
+// Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md).
+// Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.
+//
+// Permission is hereby granted, free of charge, to any person obtaining
+// a copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to
+// permit persons to whom the Software is furnished to do so, subject to
+// the following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+// IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+// CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+// TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+// SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 std::pair<Vec, Vec> closest(Vec p0, Vec p1, Vec q0, Vec q1) {
     const Vec p = p1 - p0, q = q1 - q0, r = p0 - q0;
     const float a = p.dot(p), b = p.dot(q), c = q.dot(q), d = p.dot(r), e = q.dot(r);
@@ -156,8 +176,8 @@ struct Occlusion {
                     if (!blocker.airflow || blocker.radius < minimum_radius ||
                             blocker.low.x > high.x || blocker.low.y > high.y || blocker.low.z > high.z ||
                             blocker.high.x < low.x || blocker.high.y < low.y || blocker.high.z < low.z ||
-                            (a.layered() ? blocker.id == a[owner] : blocker.id == a[id]) ||
-                            (b && (b->layered() ? blocker.id == (*b)[owner] : blocker.id == (*b)[id]))) continue;
+                            blocker.id == a[owner] || blocker.id == a[id] ||
+                            (b && (blocker.id == (*b)[owner] || blocker.id == (*b)[id]))) continue;
                     const auto points = closest(from, to, blocker.start, blocker.end);
                     const double radius = blocker.radius + margin;
                     if ((points.first - points.second).length_squared() < radius * radius) return false;
@@ -254,6 +274,15 @@ bool approx(float a, float b) {
 struct Totals {
     double load = 0.0, flame = 0.0, view = 0.0, ember = 0.0, fibre_contact = 0.0;
 };
+
+bool valid_geometry(const double *row, std::size_t width) {
+    return std::all_of(row, row + width, [](double value) { return std::isfinite(value); });
+}
+
+bool inside_grid(double x, double z) {
+    // Stay within a bounded grid even when a caller supplies an invalid pose.
+    return std::abs(x) <= 16.0 && std::abs(z) <= 16.0;
+}
 
 bool accepted_link(const Node &a, const Node &b, std::size_t i, std::size_t j, Occlusion &occlusion,
                    Totals &total_a, Totals &total_b, double &crowd_a, double &crowd_b, double *out) {
@@ -393,9 +422,16 @@ bool build_network(const double *geometry, std::size_t values, const double *occ
     nodes.reserve(count);
     for (std::size_t i = 0; i < count; ++i) {
         const auto *row = geometry + i * geometry_width;
+        if (!valid_geometry(row, geometry_width) || !inside_grid(row[plan_x], row[plan_y]) ||
+                !inside_grid(row[heat_x], row[heat_z])) return false;
         const Vec center{float(row[plan_x]), float(row[height]), float(row[plan_y])};
         const Vec axis = vector(row + heat_x);
         nodes.push_back({row, center, axis, center - axis, center + axis, std::max(0.0001, double(axis.length_squared()))});
+    }
+    for (std::size_t i = 0; i < occluder_values; i += occluder_width) {
+        const auto *row = occluders + i;
+        if (!valid_geometry(row, occluder_width) || !inside_grid(row[1], row[3]) ||
+                !inside_grid(row[4], row[6]) || !(row[7] >= 0.0 && row[7] <= 4.0)) return false;
     }
     Occlusion occlusion(occluders, occluder_values / occluder_width);
     std::vector<Totals> totals(count);
@@ -409,7 +445,8 @@ bool build_network(const double *geometry, std::size_t values, const double *occ
     }
     std::size_t accepted = 0;
     for (std::size_t k = 0; k < pair_values; k += 2) {
-        if (!(pairs[k] >= 0 && pairs[k + 1] > pairs[k] && pairs[k + 1] < double(count))) return false;
+        if (!(pairs[k] >= 0 && pairs[k + 1] > pairs[k] && pairs[k + 1] < double(count) &&
+                pairs[k] == std::floor(pairs[k]) && pairs[k + 1] == std::floor(pairs[k + 1]))) return false;
         const auto i = std::size_t(pairs[k]), j = std::size_t(pairs[k + 1]);
         if (accepted_link(nodes[i], nodes[j], i, j, occlusion, totals[i], totals[j],
                 crowding[i], crowding[j], links + accepted * link_width)) {
