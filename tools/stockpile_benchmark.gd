@@ -4,7 +4,8 @@ const LabScene := preload("res://hearth/hearth.tscn")
 const Chapter := preload("res://sim/red_hollow.gd")
 const Fire := Chapter.Fire
 const MODES := ["matrix", "controls", "headless", "profile", "headless_controls", "structure", "headless_structure",
-	"thermal_trace", "regression"]
+	"thermal_trace", "regression", "architecture", "headless_architecture", "architecture_actions", "headless_architecture_actions",
+	"promotion", "headless_promotion"]
 
 var lab
 var bench
@@ -15,6 +16,7 @@ var case_filter := ""
 var phase := "matrix"
 var diagnostic = null
 var write_trace := false
+var fixture_save := ""
 
 func _initialize() -> void:
 	_run.call_deferred()
@@ -33,6 +35,9 @@ func _run() -> void:
 	if args.size() > 2: elapsed = maxf(0.5, args[2].to_float())
 	if args.size() > 3: case_filter = args[3]
 	write_trace = "--full-trace" in args
+	for argument in args:
+		if argument.begins_with("--fixture-save="):
+			fixture_save = argument.trim_prefix("--fixture-save=")
 	log_file = FileAccess.open(args[0], FileAccess.WRITE)
 	if log_file == null:
 		quit(1)
@@ -45,7 +50,7 @@ func _run() -> void:
 		"threads": OS.get_processor_count(), "ram": OS.get_memory_info().get("physical", 0),
 		"gpu": RenderingServer.get_video_adapter_name(), "api": RenderingServer.get_video_adapter_api_version(),
 		"os": OS.get_version(), "window": str(root.size), "phase": phase, "seconds": elapsed, "instrumented": diagnostic != null,
-		"pid": OS.get_process_id()})
+		"pid": OS.get_process_id(), "native_exchange": ClassDB.class_exists(&"FiretenderKernel") and "--reference-fire" not in args})
 	_build_cases()
 	var filter := RegEx.new()
 	if filter.compile(case_filter) != OK:
@@ -87,6 +92,22 @@ func _build_cases() -> void:
 		_case(60, 9, 1, "flame", "near")
 		for speed in [16, 64]:
 			_case(60, 9, speed, "flame", "dense")
+	elif phase.ends_with("architecture"):
+		for speed in [1, 16, 64]:
+			for stock in [20, 60, 100, 150]:
+				for drying in [3, 6, 9, 12]:
+					_case(stock, drying, speed)
+					_case(stock, drying, speed, "flame", "dense")
+				for drying in [9, 12]:
+					_case(stock, drying, speed, "scorch")
+	elif phase.ends_with("architecture_actions"):
+		for stock in [100, 150]:
+			for action in ["move", "support_bottom", "support_collapse"]:
+				_case(stock, 9, 1, "flame", "dense", action)
+		for speed in [1, 16, 64]:
+			_case(60, 9, speed, "flame", "near")
+	elif phase.ends_with("promotion"):
+		_case(60, 9, 1, "coal", "near", "promote")
 	elif phase in ["matrix", "headless"]:
 		for speed in [1, 16, 64] if phase == "matrix" else [1]:
 			for stock in [0, 20, 40, 60, 100]:
@@ -124,9 +145,9 @@ func _setup(story: Chapter, spec: Dictionary) -> Fire.Piece:
 	fire._reindex()
 	for i in range(6):
 		var angle := TAU * i / 6.0
-		fire._new_coal(Vector2.from_angle(angle) * 0.62, 0.066, 635.0, 0.037)
+		fire._new_coal(Vector2.from_angle(angle) * 0.62, 0.066, 24.0 if spec.mode == "promote" else 635.0, 0.037)
 	for i in range(3):
-		fire._new_coal(Vector2.from_angle(TAU * i / 3.0) * 0.19, 0.077, 692.0, 0.049)
+		fire._new_coal(Vector2.from_angle(TAU * i / 3.0) * 0.19, 0.077, 24.0 if spec.mode == "promote" else 692.0, 0.049)
 	if spec.state != "coal":
 		for i in range(4):
 			var angle := TAU * i / 4.0
@@ -160,6 +181,9 @@ func _setup(story: Chapter, spec: Dictionary) -> Fire.Piece:
 		var piece := fire.receive_fuel([7, 8, 2, 10, 12, 9][i % 6], at, yaw, tier, 0.44 if i % 5 == 0 else 0.14)
 		if i == 0:
 			handled = piece
+	if spec.mode == "promote":
+		handled = fire.receive_fuel(10, Vector2(0.0, 0.65), 0.3, 0, 0.08)
+		fire._prime(handled, 520.0, 510.0, 280.0)
 	fire.seat_new_stock()
 	fire._settle()
 	fire._refresh_storage_membership()
@@ -216,6 +240,9 @@ func _support_action(fire: Fire, piece: Fire.Piece, action: String) -> void:
 		yaw += PI * 0.36
 	fire.pose_fuel(piece, at, yaw, piece.lean, piece.tier, true)
 
+func _promotion_action(fire: Fire, piece: Fire.Piece) -> void:
+	fire.pose_fuel(piece, Vector2(-0.17, -1.52), piece.axis.angle(), 0.0, 0, true)
+
 func _structure_trace(spec: Dictionary) -> void:
 	var story := Chapter.new(Fire.new())
 	_setup(story, spec)
@@ -247,22 +274,37 @@ func _thermal_trace(spec: Dictionary) -> void:
 	var fire := story.fire
 	var states := []
 	var peak_flame := 0.0
+	var first_flame := -1.0
 	for i in range(160):
 		if spec.state == "ignition":
 			fire.step()
 		else:
 			story.step()
 		peak_flame = maxf(peak_flame, fire.total_flame())
+		if first_flame < 0.0 and fire.total_flame() >= 0.20:
+			first_flame = fire.time
 		if i % 4 == 0:
 			var state := [fire.time, fire.oxygen, fire.radiated, fire.absorbed, fire.evaporated_water, fire.received_water]
 			for piece in fire.nodes + fire.all_fuel():
-				state.append([piece.id, piece.temperature, piece.water, piece.wood, piece.char_mass, piece.flame, piece.gas])
+				state.append(_thermal_state(piece))
+			for piece in fire.all_fuel():
+				for section in piece.sections:
+					state.append(_thermal_state(section.core))
+					for lane in section.inner:
+						state.append(_thermal_state(lane))
+					for face in section.faces:
+						state.append(_thermal_state(face))
 			state.append(fire.links.map(func(link): return [link.a, link.b, link.conductance, link.view_a, link.view_b, link.receive_a, link.receive_b]))
 			states.append(state)
-	var row := {"id": spec.id, "peak_flame": peak_flame, "thermal_digest": JSON.stringify(states).sha256_text()}
+	var row := {"id": spec.id, "peak_flame": peak_flame, "first_flame": first_flame,
+		"thermal_digest": JSON.stringify(states, "", true, true).sha256_text()}
 	if write_trace:
 		row["thermal_trace"] = states
 	_write(row)
+
+static func _thermal_state(piece: Fire.Piece) -> Array:
+	return [piece.id, piece.temperature, piece.water, piece.wood, piece.char_mass, piece.flame, piece.gas,
+		piece.mineral, piece.cover, piece.capacity(), piece.internal_heat, piece.conduction, piece.radiation_in, piece.plume_heat]
 
 static func _support_state(fire: Fire) -> Array:
 	var ordered := fire.all_fuel().duplicate()
@@ -289,6 +331,11 @@ func _rendered_case(spec: Dictionary) -> void:
 	var fire := story.fire
 	bench = lab.view.workbench
 	lab.view.set_tool(lab.view.Tool.WOOD)
+	if not fixture_save.is_empty():
+		var save := preload("res://sim/chapter_save.gd")
+		var error := save.write_slot(fixture_save, story, lab.mentor)
+		if error != OK:
+			push_error("Unable to save the Chapter II benchmark fixture: %s" % error_string(error))
 	if diagnostic != null:
 		diagnostic.force_reduced = spec.mode == "reduced"
 	if spec.mode == "look_pile":
@@ -314,6 +361,9 @@ func _rendered_case(spec: Dictionary) -> void:
 	var preview_actions := PackedFloat64Array()
 	var support_subject: Fire.Piece
 	var peak_airborne := 0
+	var promotion_start := fire.wood.size()
+	var promotion_peak := promotion_start
+	var next_step_promotion_ms := 0.0
 	if diagnostic != null: diagnostic.begin(spec.mode == "reduced")
 	var parked := handled.at if handled != null else Vector2.ZERO
 	while float(last_frame - start) / 1e6 < elapsed:
@@ -331,6 +381,15 @@ func _rendered_case(spec: Dictionary) -> void:
 				actions.append((Time.get_ticks_usec() - action_start) / 1000.0)
 				action_count += 1
 			peak_airborne = maxi(peak_airborne, fire.all_fuel().filter(func(piece): return piece.airborne).size())
+		if spec.mode == "promote" and fire.time - start_time >= 0.5:
+			if action_count == 0:
+				var action_start := Time.get_ticks_usec()
+				_promotion_action(fire, handled)
+				actions.append((Time.get_ticks_usec() - action_start) / 1000.0)
+				action_count = 1
+			elif action_count == 1 and fire.time - start_time >= 0.75:
+				next_step_promotion_ms = frames[-1]
+				action_count = 2
 		if handled != null and spec.mode in ["move", "turn", "place"] and now - last_action > 140000:
 			var action_start := Time.get_ticks_usec()
 			var offset := Vector2(0.055, 0.03) if action_count % 2 == 0 else Vector2.ZERO
@@ -357,6 +416,8 @@ func _rendered_case(spec: Dictionary) -> void:
 			reading.family_jobs = 0 if story.family == null else story.family.craft.jobs.size()
 			reading.log_mesh_nodes = bench.logs.values().reduce(func(sum, nodes): return sum + nodes.size(), 0)
 			snapshots.append(reading)
+		if spec.layout == "near":
+			promotion_peak = maxi(promotion_peak, fire.wood.size())
 	var phase_detail: Dictionary = {} if diagnostic == null else diagnostic.finish()
 	var wall := (last_frame - start) / 1e6
 	if spec.mode.begins_with("support_"):
@@ -367,7 +428,8 @@ func _rendered_case(spec: Dictionary) -> void:
 	result.merge({"wall_s": wall, "sim_s": fire.time - start_time, "raster": str(bench.stage.size),
 		"end_positive_conduction": _positive_conduction(fire),
 		"support_subject": 0 if support_subject == null else support_subject.id, "peak_airborne": peak_airborne,
-		"start_active": snapshots[0].active, "end_active": fire.wood.size(), "end_outcome": story.outcome,
+		"start_active": promotion_start, "end_active": fire.wood.size(), "peak_active": promotion_peak, "end_outcome": story.outcome,
+		"first_promotion_frame_ms": next_step_promotion_ms,
 		"frames": _stats(frames), "render_cpu": _stats(render_cpu), "render_gpu": _stats(render_gpu),
 		"actions": _stats(actions), "drag_preview": _stats(preview_actions), "readings": _aggregate(snapshots), "profile": phase_detail})
 	_write(result)
@@ -377,14 +439,34 @@ func _rendered_case(spec: Dictionary) -> void:
 
 func _headless_case(spec: Dictionary) -> void:
 	var story := Chapter.new(Fire.new())
-	_setup(story, spec)
+	var handled := _setup(story, spec)
 	var fire := story.fire
 	var frames := PackedFloat64Array()
 	var snapshots: Array[Dictionary] = []
 	if diagnostic != null: diagnostic.begin()
 	var start := Time.get_ticks_usec()
 	var sim_start := fire.time
-	while story.outcome.is_empty() and (frames.size() < 24 or ((Time.get_ticks_usec() - start) < elapsed * 1e6 and frames.size() < 160)):
+	var matched: bool = phase.begins_with("headless_architecture") or spec.mode == "promote"
+	var active_before := fire.wood.size()
+	var actions := PackedFloat64Array()
+	var parked := handled.at if handled != null else Vector2.ZERO
+	while story.outcome.is_empty() and frames.size() < (24 if matched else 160):
+		if not matched and frames.size() >= 24 and Time.get_ticks_usec() - start >= elapsed * 1e6:
+			break
+		if frames.size() == 2 and spec.mode.begins_with("support_"):
+			var subject := _support_subject(fire, spec.mode)
+			var action_start := Time.get_ticks_usec()
+			_support_action(fire, subject, spec.mode)
+			actions.append((Time.get_ticks_usec() - action_start) / 1000.0)
+		elif frames.size() == 2 and spec.mode == "promote":
+			var action_start := Time.get_ticks_usec()
+			_promotion_action(fire, handled)
+			actions.append((Time.get_ticks_usec() - action_start) / 1000.0)
+		elif spec.mode == "move" and frames.size() % 4 == 2:
+			var offset := Vector2(0.055, 0.03) if actions.size() % 2 == 0 else Vector2.ZERO
+			var action_start := Time.get_ticks_usec()
+			fire.pose_fuel(handled, parked + offset, handled.axis.angle(), 0.0, 0, true)
+			actions.append((Time.get_ticks_usec() - action_start) / 1000.0)
 		var at := Time.get_ticks_usec()
 		story.step()
 		frames.append((Time.get_ticks_usec() - at) / 1000.0)
@@ -394,7 +476,9 @@ func _headless_case(spec: Dictionary) -> void:
 	var row := spec.duplicate()
 	row.merge({"wall_s": (Time.get_ticks_usec() - start) / 1e6, "sim_s": fire.time - sim_start,
 		"end_positive_conduction": _positive_conduction(fire),
-		"step": _stats(frames), "readings": _aggregate(snapshots), "profile": detail})
+		"step": _stats(frames), "actions": _stats(actions), "readings": _aggregate(snapshots), "profile": detail,
+		"start_active": active_before, "end_active": fire.wood.size(),
+		"first_promotion_step_ms": frames[2] if spec.mode == "promote" and frames.size() > 2 else 0.0})
 	_write(row)
 
 static func _positive_conduction(fire: Fire) -> int:

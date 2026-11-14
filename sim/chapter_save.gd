@@ -12,7 +12,8 @@ const FIRE_SKIP := ["wood", "stored", "coals", "sparks", "breaths", "falling", "
 	"nodes", "links", "radiant_links", "fuel_stock",
 	"seat_cache", "support_geometry", "support_geometry_serial", "network_candidates", "network_occluders",
 	"occluder_centers", "occluder_axes", "occluder_inverse_axis", "occluder_radius",
-	"occluder_lower", "occluder_upper", "radiation_cells"]
+	"occluder_lower", "occluder_upper", "radiation_cells", "airflow_cells", "wind_stock_cells", "wind_stock_indexed",
+	"exchange_links", "exchange_nodes", "exchange_fibre", "exchange_bed"]
 const PIECE_SKIP := ["sections", "faces", "inner", "core", "pose"]
 const WORK_SKIP := ["fire", "parcels", "roast", "resin", "lessons", "techniques"]
 const FAMILY_SKIP := ["fire", "weather", "workshop", "rng", "land", "craft", "stormfall"]
@@ -348,6 +349,10 @@ static func _restore_fire(fire: Fire, data: Dictionary) -> bool:
 	fire.support_geometry_serial = 0
 	fire.network_candidates = 0
 	fire.network_occluders.clear()
+	fire.exchange_links.clear()
+	fire.exchange_nodes.clear()
+	fire.exchange_bed.clear()
+	fire.exchange_fibre.clear()
 	var indices := {}
 	for group: String in ["wood", "stored", "coals"]:
 		var result: Variant = _parts(data.get(group), indices, 0)

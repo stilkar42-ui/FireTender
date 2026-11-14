@@ -48,11 +48,18 @@ def instrument(root):
     template = Path(__file__).with_name("stockpile_probe.gd.template")
     (root / "tools/stockpile_probe.gd").write_bytes(template.read_bytes())
     optimized_network = "func _network_pair_rows(" in (root / "sim/fire.gd").read_text(encoding="utf-8")
-    wrappers(root, "sim/fire.gd", [
+    architecture = "func _exchange_links_native(" in (root / "sim/fire.gd").read_text(encoding="utf-8")
+    fire_methods = [
         ("step", "dt", False), ("_prepare_network", "", False), ("_settle", "gravity, fall_step, moved_piece", False),
         ("_refresh_storage_membership", "", False), ("_weather_storage", "elapsed", False),
         ("_apply_weight", "ordered", False), ("preview", "kind, at, yaw, lean, tier, id, precise", True),
-    ])
+    ]
+    if architecture:
+        fire_methods.extend([
+            ("_pack_exchange_links", "", False), ("_exchange_links_native", "", False),
+            ("_index_network_occluders", "", False), ("_network_pair_rows", "", True),
+        ])
+    wrappers(root, "sim/fire.gd", fire_methods)
     wrappers(root, "hearth/construction_3d.gd", [
         ("_refresh", "delta", False), ("_create_log", "piece", False), ("_update_log", "piece, nodes", False),
         ("_ambient_effects", "", False), ("_wood_mesh", "left, center, right, wear, seed, slice, start, end, split", True),
@@ -67,10 +74,6 @@ def instrument(root):
         ("\tvar settle_pile", '\tProbe.count("settle_population", ordered.size())\n\tvar settle_pile'),
         ("piece.pose = Structure.seat(piece.at", "var seat_start := Probe.start()\n\t\tpiece.pose = Structure.seat(piece.at"),
         ("previous if piece.fed else null)\n\t\tif piece.airborne", 'previous if piece.fed else null)\n\t\tProbe.end("Structure.seat", seat_start)\n\t\tif piece.airborne'),
-        ("for link in links:\n\t\tvar i", 'var exchange_start := Probe.start()\n\tfor link in links:\n\t\tvar i'),
-        ("\tradiated = 0.0\n\tabsorbed = 0.0\n\tvar kelvin", '\tProbe.end("step.conduction_and_plume", exchange_start)\n\tradiated = 0.0\n\tabsorbed = 0.0\n\tvar kelvin'),
-        ("\tfor link in radiant_links:\n\t\tvar a", '\tvar radiation_start := Probe.start()\n\tfor link in radiant_links:\n\t\tvar a'),
-        ("\tvar oxygen_used := 0.0", '\tProbe.end("step.radiation", radiation_start)\n\tvar oxygen_used := 0.0'),
         ("\tvar oxygen_used := 0.0", '\tvar react_start := Probe.start()\n\tvar oxygen_used := 0.0'),
         ("\tsmoke_field.advance(self, dt)", '\tProbe.end("step.surface_reaction", react_start)\n\tvar smoke_start := Probe.start()\n\tsmoke_field.advance(self, dt)\n\tProbe.end("step.smoke", smoke_start)'),
         ("\tfor i in range(wood.size() - 1, -1, -1):\n\t\tvar piece := wood[i]\n\t\tif piece.core", '\tvar interiors_start := Probe.start()\n\tfor i in range(wood.size() - 1, -1, -1):\n\t\tvar piece := wood[i]\n\t\tif piece.core'),
@@ -85,6 +88,13 @@ def instrument(root):
         ("var visibility := _radiation_visibility(from, to, a, b) if geometry else 0.20", "var visibility_start := Probe.start()\n\t\t\t\tvar visibility := _radiation_visibility(from, to, a, b) if geometry else 0.20\n\t\t\t\tvisibility_usec += Time.get_ticks_usec() - visibility_start\n\t\t\t\tvisibility_calls += 1"),
         ("\t\t\tlinks.append(link)\n\tfor link in links:", '\t\t\tlinks.append(link)\n\tProbe.end("network.pairs", pair_start)\n\tProbe.add("network.rejections", rejected_usec, rejected)\n\tProbe.add("network.visibility", visibility_usec, visibility_calls)\n\tfor link in links:'),
     ])
+    if not architecture:
+        edit(root, "sim/fire.gd", [
+            ("for link in links:\n\t\tvar i", 'var exchange_start := Probe.start()\n\tfor link in links:\n\t\tvar i'),
+            ("\tradiated = 0.0\n\tabsorbed = 0.0\n\tvar kelvin", '\tProbe.end("step.conduction_and_plume", exchange_start)\n\tradiated = 0.0\n\tabsorbed = 0.0\n\tvar kelvin'),
+            ("\tfor link in radiant_links:\n\t\tvar a", '\tvar radiation_start := Probe.start()\n\tfor link in radiant_links:\n\t\tvar a'),
+            ("\tvar oxygen_used := 0.0", '\tProbe.end("step.radiation", radiation_start)\n\tvar oxygen_used := 0.0'),
+        ])
 
 
 if __name__ == "__main__":
