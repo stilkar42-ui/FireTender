@@ -10,6 +10,7 @@ const VERSION := 4
 const MAX_BYTES := 24 * 1024 * 1024
 const FIRE_SKIP := ["wood", "stored", "coals", "sparks", "breaths", "falling", "cells", "shelter", "smoke_field",
 	"nodes", "links", "radiant_links", "fuel_stock", "network_geometry", "network_material",
+	"_links", "_radiant_links", "packed_topology", "packed_radiant_count",
 	"seat_cache", "support_geometry", "support_geometry_serial", "network_candidates", "network_occluders",
 	"occluder_centers", "occluder_axes", "occluder_inverse_axis", "occluder_radius",
 	"occluder_lower", "occluder_upper", "radiation_cells", "airflow_cells", "wind_stock_cells", "wind_stock_indexed",
@@ -353,6 +354,8 @@ static func _restore_fire(fire: Fire, data: Dictionary) -> bool:
 	fire.exchange_nodes.clear()
 	fire.exchange_bed.clear()
 	fire.exchange_fibre.clear()
+	fire.packed_topology = false
+	fire.packed_radiant_count = 0
 	var indices := {}
 	for group: String in ["wood", "stored", "coals"]:
 		var result: Variant = _parts(data.get(group), indices, 0)

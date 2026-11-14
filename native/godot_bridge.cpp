@@ -50,12 +50,19 @@ struct PackedArray {
     }
 };
 
-enum Operation : uintptr_t { exchange, fit, boundary, support_floors, candidate_pairs };
+enum Operation : uintptr_t { exchange, fit, boundary, support_floors, candidate_pairs, build_network };
+
+int argument_count(Operation operation) {
+    if (operation == fit) return 4;
+    if (operation == candidate_pairs) return 1;
+    if (operation == build_network) return 3;
+    return 2;
+}
 
 void call(void *userdata, GDExtensionClassInstancePtr, const GDExtensionConstVariantPtr *args,
           GDExtensionInt count, GDExtensionVariantPtr output, GDExtensionCallError *error) {
     const auto operation = static_cast<Operation>(reinterpret_cast<uintptr_t>(userdata));
-    const int expected = operation == fit ? 4 : (operation == candidate_pairs ? 1 : 2);
+    const int expected = argument_count(operation);
     if (count != expected) {
         error->error = count < expected ? GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS : GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS;
         error->expected = expected;
@@ -92,6 +99,21 @@ void call(void *userdata, GDExtensionClassInstancePtr, const GDExtensionConstVar
             }
             result.resize(actual);
         }
+    } else if (operation == build_network) {
+        PackedArray blockers(args[1]), pairs(args[2]);
+        const auto length = values.size(), blocker_length = blockers.size(), pair_length = pairs.size();
+        const auto nodes = length / fire::geometry_width;
+        if (nodes && nodes <= 1024 && blocker_length <= 1024 * fire::occluder_width &&
+                pair_length <= nodes * (nodes - 1) && result.resize(1 + 2 * nodes + pair_length / 2 * fire::link_width)) {
+            std::size_t actual = 0;
+            if (!fire::build_network(read_at(values.storage, 0), length,
+                    blocker_length ? read_at(blockers.storage, 0) : nullptr, blocker_length,
+                    pair_length ? read_at(pairs.storage, 0) : nullptr, pair_length,
+                    write_at(result.storage, 0), actual)) {
+                actual = 0;
+            }
+            result.resize(actual);
+        }
     } else {
         PackedArray links(args[1]);
         const auto node_values = values.size();
@@ -118,6 +140,7 @@ void call(void *userdata, GDExtensionClassInstancePtr, const GDExtensionConstVar
 void add_method(const Name &klass, const char *method_name, Operation operation) {
     Name name(method_name), empty(""), nodes("nodes"), links("links");
     Name samples("samples"), desired("desired"), balance("balance"), span("span");
+    Name blockers("blockers"), pairs("pairs");
     alignas(8) char hint[abi::string_size];
     string_new(hint, nullptr);
     auto property = [&](Name &label, GDExtensionVariantType type) {
@@ -125,6 +148,7 @@ void add_method(const Name &klass, const char *method_name, Operation operation)
     };
     auto result = property(empty, packed_type);
     GDExtensionPropertyInfo exchange_args[] = {property(nodes, packed_type), property(links, packed_type)};
+    GDExtensionPropertyInfo network_args[] = {property(nodes, packed_type), property(blockers, packed_type), property(pairs, packed_type)};
     GDExtensionPropertyInfo fit_args[] = {
         property(samples, packed_type), property(desired, GDEXTENSION_VARIANT_TYPE_FLOAT),
         property(balance, GDEXTENSION_VARIANT_TYPE_FLOAT), property(span, GDEXTENSION_VARIANT_TYPE_FLOAT)
@@ -137,8 +161,8 @@ void add_method(const Name &klass, const char *method_name, Operation operation)
     method.method_flags = GDEXTENSION_METHOD_FLAG_NORMAL | GDEXTENSION_METHOD_FLAG_STATIC;
     method.has_return_value = true;
     method.return_value_info = &result;
-    method.argument_count = operation == fit ? 4 : (operation == candidate_pairs ? 1 : 2);
-    method.arguments_info = operation == fit ? fit_args : exchange_args;
+    method.argument_count = argument_count(operation);
+    method.arguments_info = operation == fit ? fit_args : (operation == build_network ? network_args : exchange_args);
     method.arguments_metadata = metadata;
     register_method(library, klass.storage, &method);
     string_destroy(hint);
@@ -159,6 +183,7 @@ void initialize(void *, GDExtensionInitializationLevel level) {
     add_method(klass, "boundary", boundary);
     add_method(klass, "support_floors", support_floors);
     add_method(klass, "candidate_pairs", candidate_pairs);
+    add_method(klass, "build_network", build_network);
 }
 
 void deinitialize(void *, GDExtensionInitializationLevel level) {

@@ -39,4 +39,21 @@ bool support_floors(const double *samples, std::size_t values, const double *sup
 bool candidate_pairs(const double *geometry, std::size_t values, double *out,
                      std::size_t &output_size);
 
+// The first six fields are the existing candidate geometry row. Coordinates
+// used by Vector2/3 are single precision; heights and coefficients are doubles.
+enum GeometryField {
+    plan_x, plan_y, height, reach_size, owner, kind, id, axis_x, axis_y,
+    heat_x, heat_y, heat_z, radius, layer, precise, porous, original, area_scale,
+    fraction, carried, carbon, heat_capacity, surface_weight, species_mass, passage,
+    plume_fuel, tinder, jet_target, geometry_width
+};
+
+// Occluders are [id, x, height, z, heat axis x/y/z, radius, blocks airflow, seated].
+constexpr std::size_t occluder_width = 10;
+
+// Output: [radiant count, crowding per node, starter ventilation per node, exchange rows].
+bool build_network(const double *geometry, std::size_t values, const double *occluders,
+                   std::size_t occluder_values, const double *pairs, std::size_t pair_values,
+                   double *out, std::size_t &output_size);
+
 } // namespace fire

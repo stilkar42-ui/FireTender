@@ -37,8 +37,10 @@ constexpr long long resize_hash = $(($methods | Where-Object name -eq 'resize').
 
     $dll = Join-Path $Destination 'fire_kernel.windows.x86_64.dll'
     $flags = @('c++', '-target', 'x86_64-windows-gnu', '-O3', '-std=c++17', '-shared',
-        '-fno-exceptions', '-fno-rtti', '-ffp-contract=off', '-s', "-I$scratch")
-    & $Zig @flags (Join-Path $PSScriptRoot 'godot_bridge.cpp') (Join-Path $PSScriptRoot 'fire_kernel.cpp') -o $dll
+        '-fno-exceptions', '-fno-rtti', '-ffp-contract=off', '-s', "-I$scratch",
+        "-Wl,--out-implib,$(Join-Path $scratch 'fire_kernel.lib')")
+    & $Zig @flags (Join-Path $PSScriptRoot 'godot_bridge.cpp') (Join-Path $PSScriptRoot 'fire_kernel.cpp') `
+        (Join-Path $PSScriptRoot 'thermal_network.cpp') -o $dll
     if ($LASTEXITCODE -ne 0) { throw 'Native kernel build failed.' }
     if ($Destination -ne $PSScriptRoot) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fire_kernel.gdextension') -Destination $Destination

@@ -341,8 +341,23 @@ var seat_cache := {}
 var support_geometry := {}
 var support_geometry_serial := 0
 var nodes: Array[Piece] = []
-var links: Array[Link] = []
-var radiant_links: Array[Link] = []
+const EXCHANGE_LINK_WIDTH := 15
+var _links: Array[Link] = []
+var _radiant_links: Array[Link] = []
+var packed_topology := false
+var packed_radiant_count := 0
+var links: Array[Link]:
+	get:
+		_materialize_links()
+		return _links
+	set(value):
+		_links = value
+var radiant_links: Array[Link]:
+	get:
+		_materialize_links()
+		return _radiant_links
+	set(value):
+		_radiant_links = value
 var exchange_links := PackedFloat64Array()
 var exchange_nodes := PackedFloat64Array()
 var exchange_fibre: Array[Link] = []
@@ -1773,6 +1788,10 @@ func _prepare_network() -> void:
 	network_geometry = _network_geometry()
 	network_material = _network_material()
 	exchange_links.clear()
+	_links.clear()
+	_radiant_links.clear()
+	packed_topology = false
+	packed_radiant_count = 0
 	nodes = coals.duplicate()
 	for piece in wood:
 		if piece.faces.is_empty():
@@ -1780,17 +1799,34 @@ func _prepare_network() -> void:
 		else:
 			for section in piece.sections:
 				nodes.append_array(section.faces)
-	_index_network_occluders()
-	var pair_rows := _network_pair_rows()
 	network_candidates = 0
-	links.clear()
-	radiant_links.clear()
-	crowding.fill(0.0)
-	crowding.resize(nodes.size())
 	capacities.resize(nodes.size())
 	insulations.resize(nodes.size())
 	changes.resize(nodes.size())
 	ember_heat.resize(coals.size())
+	if Native.enabled and nodes.size() >= 32 and nodes.size() <= 1024 \
+			and ClassDB.class_has_method(Native.KERNEL, &"build_network") and _build_network_native():
+		return
+	_index_network_occluders()
+	starter_ventilation.resize(nodes.size())
+	starter_ventilation.fill(0.0)
+	if wood.size() >= 5:
+		for i in nodes.size():
+			var piece := nodes[i]
+			if _ventilated_starter(piece):
+				starter_ventilation[i] = _starter_passage(piece)
+	_build_network_reference()
+
+static func _ventilated_starter(piece: Piece) -> bool:
+	return (piece.kind < 0 and piece.original <= 0.025 and not piece.carried) \
+		or piece.kind in STARTERS or piece.kind in PLUME_FUEL or piece.layer < 0
+
+func _build_network_reference() -> void:
+	# Allocate independently of any version 4 snapshot used to restore this fire.
+	crowding = PackedFloat64Array()
+	crowding.resize(nodes.size())
+	var pair_rows := _network_pair_rows()
+	network_candidates = 0
 	var loads := PackedFloat64Array()
 	loads.resize(nodes.size())
 	var flame_loads := PackedFloat64Array()
@@ -1815,13 +1851,6 @@ func _prepare_network() -> void:
 		area_weights[i] = _surface(piece) * 0.078
 		caps[i] = 0.56 * piece.original / float(SPECIES[piece.kind].mass) if piece.fibre else 0.56
 		span_squared[i] = maxf(0.0001, piece.heat_axis.length_squared())
-	starter_ventilation.resize(nodes.size())
-	starter_ventilation.fill(0.0)
-	if wood.size() >= 5:
-		for i in range(nodes.size()):
-			var piece := nodes[i]
-			if (piece.kind < 0 and piece.original <= 0.025 and not piece.carried) or piece.kind in STARTERS or piece.kind in PLUME_FUEL or piece.layer < 0:
-				starter_ventilation[i] = _starter_passage(piece)
 	for i in range(nodes.size()):
 		var a := nodes[i]
 		network_candidates += pair_rows[i].size()
@@ -1970,8 +1999,8 @@ func _prepare_network() -> void:
 				var overlap := 0.72 * exp(-delta.length_squared() / 0.006 - gap * gap / 0.021)
 				crowding[i] += overlap
 				crowding[j] += overlap
-			links.append(link)
-	for link in links:
+			_links.append(link)
+	for link in _links:
 		# Bound outgoing conduction even in a dense stack. Scale each link
 		# symmetrically, and cap feedback to a fraction of each flame's energy.
 		link.conductance /= maxf(1.0, 2.0 * STEP * maxf(loads[link.a], loads[link.b]))
@@ -1985,7 +2014,7 @@ func _prepare_network() -> void:
 		link.view_a /= maxf(1.0, views[link.a] / RADIATION_CAPTURE_LIMIT)
 		link.view_b /= maxf(1.0, views[link.b] / RADIATION_CAPTURE_LIMIT)
 		if link.view_a > 0.0 or link.view_b > 0.0:
-			radiant_links.append(link)
+			_radiant_links.append(link)
 		link.receive_a /= maxf(1.0, flame_loads[link.b] / (0.69 if nodes[link.b].kind == TINDER_BUNDLE else 0.55))
 		link.receive_b /= maxf(1.0, flame_loads[link.a] / (0.69 if nodes[link.a].kind == TINDER_BUNDLE else 0.55))
 	for i in range(nodes.size()):
@@ -1993,20 +2022,23 @@ func _prepare_network() -> void:
 		# when several nearby surfaces contribute to the crowding estimate.
 		crowding[i] *= lerpf(1.0, 0.25, starter_ventilation[i])
 
+func _candidate_geometry() -> PackedFloat64Array:
+	var geometry := PackedFloat64Array()
+	geometry.resize(nodes.size() * 6)
+	var offset := 0
+	for piece in nodes:
+		geometry[offset] = piece.at.x
+		geometry[offset + 1] = piece.at.y
+		geometry[offset + 2] = piece.height
+		geometry[offset + 3] = piece.size
+		geometry[offset + 4] = piece.owner
+		geometry[offset + 5] = piece.kind
+		offset += 6
+	return geometry
+
 func _network_pair_rows() -> Array[PackedInt32Array]:
 	if Native.enabled and nodes.size() >= 64 and nodes.size() <= 1024:
-		var geometry := PackedFloat64Array()
-		geometry.resize(nodes.size() * 6)
-		var offset := 0
-		for piece in nodes:
-			geometry[offset] = piece.at.x
-			geometry[offset + 1] = piece.at.y
-			geometry[offset + 2] = piece.height
-			geometry[offset + 3] = piece.size
-			geometry[offset + 4] = piece.owner
-			geometry[offset + 5] = piece.kind
-			offset += 6
-		var pairs: PackedFloat64Array = ClassDB.class_call_static(Native.KERNEL, &"candidate_pairs", geometry)
+		var pairs: PackedFloat64Array = ClassDB.class_call_static(Native.KERNEL, &"candidate_pairs", _candidate_geometry())
 		if not pairs.is_empty():
 			var rows: Array[PackedInt32Array] = []
 			rows.resize(nodes.size())
@@ -2014,6 +2046,111 @@ func _network_pair_rows() -> Array[PackedInt32Array]:
 				rows[int(pairs[i])].append(int(pairs[i + 1]))
 			return rows
 	return _network_pair_rows_reference()
+
+func _build_network_native() -> bool:
+	var geometry := PackedFloat64Array()
+	geometry.resize(nodes.size() * 28)
+	var offset := 0
+	for i in nodes.size():
+		var piece := nodes[i]
+		geometry[offset] = piece.at.x
+		geometry[offset + 1] = piece.at.y
+		geometry[offset + 2] = piece.height
+		geometry[offset + 3] = piece.size
+		geometry[offset + 4] = piece.owner
+		geometry[offset + 5] = piece.kind
+		geometry[offset + 6] = piece.id
+		geometry[offset + 7] = piece.axis.x
+		geometry[offset + 8] = piece.axis.y
+		geometry[offset + 9] = piece.heat_axis.x
+		geometry[offset + 10] = piece.heat_axis.y
+		geometry[offset + 11] = piece.heat_axis.z
+		geometry[offset + 12] = piece.radius
+		geometry[offset + 13] = piece.layer
+		geometry[offset + 14] = float(piece.precise)
+		geometry[offset + 15] = float(piece.fibre)
+		geometry[offset + 16] = piece.original
+		geometry[offset + 17] = piece.area_scale
+		geometry[offset + 18] = piece.fraction
+		geometry[offset + 19] = float(piece.carried)
+		geometry[offset + 20] = piece.char_mass
+		geometry[offset + 21] = piece.capacity()
+		geometry[offset + 22] = _surface(piece) * 0.078
+		geometry[offset + 23] = float(SPECIES[piece.kind].mass) if piece.fibre else 0.0
+		geometry[offset + 24] = float(wood.size() >= 5 and _ventilated_starter(piece))
+		geometry[offset + 25] = float(piece.kind in PLUME_FUEL)
+		geometry[offset + 26] = float(piece.kind == TINDER_BUNDLE)
+		geometry[offset + 27] = float(piece.kind in [0, 6, 7, 1])
+		offset += 28
+	var blockers := PackedFloat64Array()
+	blockers.resize(wood.size() * 10)
+	offset = 0
+	for piece in wood:
+		blockers[offset] = piece.id
+		blockers[offset + 1] = piece.at.x
+		blockers[offset + 2] = piece.height
+		blockers[offset + 3] = piece.at.y
+		blockers[offset + 4] = piece.heat_axis.x
+		blockers[offset + 5] = piece.heat_axis.y
+		blockers[offset + 6] = piece.heat_axis.z
+		blockers[offset + 7] = piece.radius
+		blockers[offset + 8] = float(not piece.fibre and not piece.airborne)
+		blockers[offset + 9] = float(piece.pose != null and not piece.airborne)
+		offset += 10
+	var pairs: PackedFloat64Array = ClassDB.class_call_static(Native.KERNEL, &"candidate_pairs", _candidate_geometry())
+	var built: PackedFloat64Array = ClassDB.class_call_static(Native.KERNEL, &"build_network", geometry, blockers, pairs)
+	var link_start := 1 + 2 * nodes.size()
+	if built.size() < link_start or (built.size() - link_start) % EXCHANGE_LINK_WIDTH != 0:
+		return false
+	packed_topology = true
+	network_candidates = pairs.size() / 2
+	packed_radiant_count = int(built[0])
+	crowding = built.slice(1, 1 + nodes.size())
+	starter_ventilation = built.slice(1 + nodes.size(), link_start)
+	exchange_links = built.slice(link_start)
+	exchange_fibre.clear()
+	exchange_bed.clear()
+	for index in range(0, exchange_links.size(), EXCHANGE_LINK_WIDTH):
+		var a := nodes[int(exchange_links[index])]
+		var b := nodes[int(exchange_links[index + 1])]
+		if a.fibre or b.fibre:
+			exchange_fibre.append(_unpack_link(index))
+		if a.kind < 0 and b.kind < 0:
+			exchange_bed.append(_unpack_link(index))
+	return true
+
+func thermal_link_count() -> int:
+	return exchange_links.size() / EXCHANGE_LINK_WIDTH if packed_topology else _links.size()
+
+func thermal_radiant_count() -> int:
+	return packed_radiant_count if packed_topology else _radiant_links.size()
+
+func _materialize_links() -> void:
+	# Story saves and the reference exchange use the same Link representation.
+	if not packed_topology or not _links.is_empty():
+		return
+	for offset in range(0, exchange_links.size(), EXCHANGE_LINK_WIDTH):
+		var link := _unpack_link(offset)
+		_links.append(link)
+		if link.view_a > 0.0 or link.view_b > 0.0:
+			_radiant_links.append(link)
+
+func _unpack_link(offset: int) -> Link:
+	var link := Link.new()
+	link.a = int(exchange_links[offset])
+	link.b = int(exchange_links[offset + 1])
+	link.conductance = exchange_links[offset + 2]
+	link.proximity = exchange_links[offset + 3]
+	link.delta = Vector2(exchange_links[offset + 4], exchange_links[offset + 5])
+	link.receive_a = exchange_links[offset + 6]
+	link.receive_b = exchange_links[offset + 7]
+	link.coal = int(exchange_links[offset + 8])
+	link.toward_wood = Vector2(exchange_links[offset + 9], exchange_links[offset + 10])
+	link.ember_feedback = exchange_links[offset + 11]
+	link.view_a = exchange_links[offset + 12]
+	link.view_b = exchange_links[offset + 13]
+	link.fibre_contact = link.coal >= 0 and (nodes[link.a].fibre or nodes[link.b].fibre)
+	return link
 
 func _network_pair_rows_reference() -> Array[PackedInt32Array]:
 	# The broad phase uses the largest possible reach before orientation
@@ -2327,7 +2464,7 @@ func step(dt := STEP) -> void:
 		var owner := piece.owner if piece.owner > 0 else piece.id
 		piece.draft = background_wind(piece.at, piece.height, owner) + directed
 
-	var native_exchange := Native.enabled and links.size() >= 64
+	var native_exchange := Native.enabled and (packed_topology or _links.size() >= 64)
 	if native_exchange:
 		if exchange_links.is_empty():
 			_pack_exchange_links()
