@@ -3,16 +3,32 @@ extends RefCounted
 static var data := {}
 static var enabled := false
 static var force_reduced := false
+static var rebuilds: Array[Dictionary] = []
+static var causes := {}
 
 static func begin(reduced := false) -> void:
 	data.clear()
+	rebuilds.clear()
+	causes.clear()
 	force_reduced = reduced
 	enabled = true
 
 static func finish() -> Dictionary:
 	enabled = false
 	force_reduced = false
-	return data.duplicate(true)
+	var result := data.duplicate(true)
+	result["network.rebuilds"] = rebuilds.duplicate(true)
+	return result
+
+static func invalidate(reason: String) -> void:
+	if enabled:
+		causes[reason] = causes.get(reason, 0) + 1
+
+static func rebuilt(started: int, nodes: int, links: int) -> void:
+	if enabled:
+		rebuilds.append({"usec": Time.get_ticks_usec() - started, "nodes": nodes,
+			"links": links, "causes": causes.duplicate()})
+	causes.clear()
 
 static func start() -> int:
 	return Time.get_ticks_usec()

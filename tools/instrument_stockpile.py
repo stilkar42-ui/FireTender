@@ -33,6 +33,7 @@ def wrappers(root, name, methods):
             body.append("\treturn result")
         elif name == "_prepare_network":
             body.extend([
+                '	Probe.rebuilt(probe_at, nodes.size(), links.size())',
                 '\tProbe.count("candidate_pairs", nodes.size() * (nodes.size() - 1) / 2)',
                 '\tProbe.count("narrow_candidates", get("network_candidates") if "network_candidates" in self else nodes.size() * (nodes.size() - 1) / 2)',
                 '\tProbe.count("accepted_links", links.size())',
@@ -88,6 +89,8 @@ def instrument(root):
         ("var visibility := _radiation_visibility(from, to, a, b) if geometry else 0.20", "var visibility_start := Probe.start()\n\t\t\t\tvar visibility := _radiation_visibility(from, to, a, b) if geometry else 0.20\n\t\t\t\tvisibility_usec += Time.get_ticks_usec() - visibility_start\n\t\t\t\tvisibility_calls += 1"),
         ("\t\t\tlinks.append(link)\n\tfor link in links:", '\t\t\tlinks.append(link)\n\tProbe.end("network.pairs", pair_start)\n\tProbe.add("network.rejections", rejected_usec, rejected)\n\tProbe.add("network.visibility", visibility_usec, visibility_calls)\n\tfor link in links:'),
     ])
+    if architecture:
+        instrument_network(root)
     if not architecture:
         edit(root, "sim/fire.gd", [
             ("for link in links:\n\t\tvar i", 'var exchange_start := Probe.start()\n\tfor link in links:\n\t\tvar i'),
@@ -95,6 +98,47 @@ def instrument(root):
             ("\tfor link in radiant_links:\n\t\tvar a", '\tvar radiation_start := Probe.start()\n\tfor link in radiant_links:\n\t\tvar a'),
             ("\tvar oxygen_used := 0.0", '\tProbe.end("step.radiation", radiation_start)\n\tvar oxygen_used := 0.0'),
         ])
+
+
+def instrument_network(root):
+    changes = []
+    for method, reason in (
+        ("_new_coal", "coal added"), ("_settle", "structure settled"),
+        ("_refresh_storage_membership", "active membership"),
+        ("_compact_bed", "coal merged"), ("_spark_hit", "spark receiver promoted"),
+    ):
+        path = root / "sim/fire.gd"
+        source = path.read_text(encoding="utf-8")
+        start = source.index(f"func {method}(")
+        end = source.find("\nfunc ", start + 1)
+        block = source[start:end]
+        lines = [
+            f'{line}\n{line[:len(line) - len(line.lstrip())]}Probe.invalidate("{reason}")'
+            if line.strip() == "network_dirty = true" else line
+            for line in block.split("\n")
+        ]
+        if lines != block.split("\n"):
+            changes.append((block, "\n".join(lines)))
+    edit(root, "sim/fire.gd", changes)
+
+    def section(before, after, name, indent):
+        start = f'{indent}var phase_at_{name} := Probe.start()\n'
+        stop = f'{indent}Probe.end("network.{name}", phase_at_{name})\n'
+        return [(before, start + before), (after, stop + after)]
+
+    timings = []
+    timings += section("			var link := Link.new()", "			var contact := link.proximity", "allocation", "			")
+    timings += section("				var solid := _solid_contact", "				if a.fibre and b.fibre:", "solid_contact", "				")
+    timings += section("			var contact := link.proximity", "			# Flames can reach", "conductance_and_loads", "			")
+    timings += section("			# Flames can reach", "			if link.coal >= 0:\n				var fuel", "flame_and_paths", "			")
+    timings += section("			if link.coal >= 0:\n				var fuel", "			var from := positions[i]", "ember_feedback", "			")
+    timings += section("			var from := positions[i]", "			# The greatest possible", "radiation_and_views", "			")
+    timings += section("			var parallel :=", "			links.append(link)", "crowding", "			")
+    timings += section("	for link in links:\n		# Bound outgoing", "\nfunc _network_pair_rows()", "normalization", "	")
+    timings += section("	starter_ventilation.resize", "	var pair_start := Probe.start()", "starter_ventilation", "	")
+    timings += section("		var pairs: PackedFloat64Array = ClassDB", "		if not pairs.is_empty():", "native_candidate_call", "		")
+    timings += section("	var result: PackedFloat64Array = ClassDB.class_call_static(Native.KERNEL, &\"exchange\"", "	if result.size() != nodes.size() * 4 + 1:", "native_exchange_call", "	")
+    edit(root, "sim/fire.gd", timings)
 
 
 if __name__ == "__main__":
