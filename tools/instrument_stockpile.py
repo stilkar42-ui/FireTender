@@ -103,7 +103,7 @@ def instrument(root):
 def instrument_network(root):
     changes = []
     for method, reason in (
-        ("_new_coal", "coal added"), ("_settle", "structure settled"),
+        ("_new_coal", "coal added"), ("_bench_settle", "structure settled"),
         ("_refresh_storage_membership", "active membership"),
         ("_compact_bed", "coal merged"), ("_spark_hit", "spark receiver promoted"),
     ):

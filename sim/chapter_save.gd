@@ -9,7 +9,7 @@ const Mentor := preload("res://sim/mentor.gd")
 const VERSION := 4
 const MAX_BYTES := 24 * 1024 * 1024
 const FIRE_SKIP := ["wood", "stored", "coals", "sparks", "breaths", "falling", "cells", "shelter", "smoke_field",
-	"nodes", "links", "radiant_links", "fuel_stock",
+	"nodes", "links", "radiant_links", "fuel_stock", "network_geometry", "network_material",
 	"seat_cache", "support_geometry", "support_geometry_serial", "network_candidates", "network_occluders",
 	"occluder_centers", "occluder_axes", "occluder_inverse_axis", "occluder_radius",
 	"occluder_lower", "occluder_upper", "radiation_cells", "airflow_cells", "wind_stock_cells", "wind_stock_indexed",
@@ -394,6 +394,9 @@ static func _restore_fire(fire: Fire, data: Dictionary) -> bool:
 	fire.radiant_links.clear()
 	if not fire.network_dirty and not _restore_topology(fire, data, indices):
 		return false
+	if not fire.network_dirty:
+		fire.network_geometry = fire._network_geometry()
+		fire.network_material = fire._network_material()
 	return true
 
 static func _restore_topology(fire: Fire, data: Dictionary, indices: Dictionary) -> bool:
