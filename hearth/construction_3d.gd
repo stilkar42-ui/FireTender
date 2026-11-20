@@ -18,6 +18,7 @@ const ORBIT_SPEED := 0.009
 const TILT_SPEED := 0.007
 
 signal camera_changed
+signal geometry_changed
 
 class Hit:
 	var ground := Vector2.INF
@@ -562,6 +563,7 @@ func _refresh(delta: float) -> void:
 	_prune(steam_views, steam_sources)
 	if fuel_changed:
 		_update_ash()
+		geometry_changed.emit()
 	lamp.position = luminous
 	lamp_power = clampf(strongest * 1.15, 0.0, 1.94)
 	mood.ambient_light_energy = 0.50 if fire.weather == 3 else 0.58

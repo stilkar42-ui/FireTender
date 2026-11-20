@@ -5,7 +5,8 @@ const Chapter := preload("res://sim/red_hollow.gd")
 const Fire := Chapter.Fire
 const MODES := ["matrix", "controls", "headless", "profile", "headless_controls", "structure", "headless_structure",
 	"thermal_trace", "regression", "architecture", "headless_architecture", "architecture_actions", "headless_architecture_actions",
-	"promotion", "headless_promotion", "thermal_scalability", "headless_thermal_scalability"]
+	"promotion", "headless_promotion", "thermal_scalability", "headless_thermal_scalability",
+	"bonfire", "headless_bonfire"]
 
 var lab
 var bench
@@ -108,6 +109,11 @@ func _build_cases() -> void:
 			_case(60, 9, speed, "flame", "near")
 	elif phase.ends_with("promotion"):
 		_case(60, 9, 1, "coal", "near", "promote")
+	elif phase.ends_with("bonfire"):
+		for logs in [24, 48, 72]:
+			_case(100, logs, 1, "flame", "bonfire")
+		_case(100, 48, 1, "flame", "bonfire", "orbit")
+		_case(100, 48, 1, "flame", "bonfire", "move")
 	elif phase.ends_with("thermal_scalability"):
 		for fixture in [[60, 6], [100, 9], [150, 12]]:
 			for state in ["coal", "flame", "scorch"]:
@@ -153,6 +159,8 @@ func _setup(story: Chapter, spec: Dictionary) -> Fire.Piece:
 	fire.stored.clear()
 	fire.coals.clear()
 	fire._reindex()
+	if spec.layout == "bonfire":
+		return _setup_bonfire(story, spec)
 	for i in range(6):
 		var angle := TAU * i / 6.0
 		fire._new_coal(Vector2.from_angle(angle) * 0.62, 0.066, 24.0 if spec.mode == "promote" else 635.0, 0.037)
@@ -210,6 +218,32 @@ func _setup(story: Chapter, spec: Dictionary) -> Fire.Piece:
 			story.family.craft.starts_at = fire.time
 			story.family.workshop.add("bone", 170, Chapter.Family.Workshop.HUNTER)
 			story.family.workshop.add("meat", 120, Chapter.Family.Workshop.COOK)
+	return handled
+
+func _setup_bonfire(story: Chapter, spec: Dictionary) -> Fire.Piece:
+	var fire := story.fire
+	for i in 9:
+		fire._new_coal(Vector2((i % 3 - 1) * 0.22, (i / 3 - 1) * 0.22), 0.077, 690.0, 0.049)
+	var handled: Fire.Piece
+	for i in spec.drying:
+		var course: int = i / 6
+		var across: float = (i % 6 - 2.5) * 0.105
+		var at := Vector2(0, across) if course % 2 == 0 else Vector2(across, 0)
+		var yaw := 0.0 if course % 2 == 0 else PI * 0.5
+		var piece := fire.receive_fuel(10, at, yaw, course, 0.12)
+		fire._prime(piece, 440.0, 520.0, 180.0)
+		if handled == null:
+			handled = piece
+	for i in spec.stock:
+		fire.receive_fuel([7, 8, 2, 10, 12, 9][i % 6],
+			Vector2(-2.6 + (i % 8) * 0.16, -3.6 + ((i / 8) % 2) * 0.56),
+			PI * 0.5, i / 16, 0.14)
+	fire.seat_new_stock()
+	fire._refresh_storage_membership()
+	fire._settle()
+	fire._reindex()
+	for i in 12:
+		story.step()
 	return handled
 
 func _move_action(fire: Fire, piece: Fire.Piece, parked: Vector2, mode: String, index: int) -> void:
