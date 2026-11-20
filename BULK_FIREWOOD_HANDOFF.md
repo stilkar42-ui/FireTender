@@ -23,6 +23,7 @@ Bulk records retain each original Piece, including identity, kind/species, size,
 
 ## Verification
 
+- Windows export: the actual packaged executable loaded the staged Chapter III save (49 bulk records, nine carried pieces) and the unchanged Chapter II stress save (zero bulk records), exited 0, and loaded its bundled native DLL. Profile file hashes were unchanged. Export/launch logs and DLL module evidence are in `outputs/bulk-firewood/`.
 - Bulk conservation/save checks: 16/0, native and GDScript fallback. Mixed-condition sorting, transfers, missing types, return, regional drying, legacy metadata absence, binary save/reload and Rusk's in-transit delivery match. Fixture generation writes only under outputs.
 - Rendered scripted loop: shortcut, wet delivery, dry kindling to hearth, three damp placements, save/reload through the actual workbench loader, and five camera/floor-picking approaches passed. This is scripted rendered verification, not a claim of a long manual playthrough.
 - Gathering 26/0; woodpile 26/0; combustion 46/0 including deterministic two-hour run; grain 30/0; construction 24/0; workbench 126/0; Chapter I–III journey 16/0; family 70/0; family scene 29/0; physical workshop 25/0; profiles/story menu 33/0.
