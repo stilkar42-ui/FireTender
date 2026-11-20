@@ -6,7 +6,7 @@ const Fire := Chapter.Fire
 const MODES := ["matrix", "controls", "headless", "profile", "headless_controls", "structure", "headless_structure",
 	"thermal_trace", "regression", "architecture", "headless_architecture", "architecture_actions", "headless_architecture_actions",
 	"promotion", "headless_promotion", "thermal_scalability", "headless_thermal_scalability",
-	"bonfire", "headless_bonfire"]
+	"bonfire", "headless_bonfire", "bulk_storage", "headless_bulk_storage"]
 
 var lab
 var bench
@@ -76,6 +76,10 @@ func _run() -> void:
 	quit(0 if selected > 0 else 1)
 
 func _build_cases() -> void:
+	if phase.ends_with("bulk_storage"):
+		_case(150, 12, 1, "scorch", "dense", "family_loose")
+		_case(150, 12, 1, "scorch", "dense", "family_bulk")
+		return
 	if phase == "thermal_trace":
 		_case(60, 9, 1, "coal")
 		_case(60, 9, 1, "flame", "dense")
@@ -213,6 +217,10 @@ func _setup(story: Chapter, spec: Dictionary) -> Fire.Piece:
 	if spec.mode.begins_with("family"):
 		story.outcome = "prepared"
 		story.begin_family()
+		if spec.mode == "family_bulk":
+			for piece in fire.stored.duplicate():
+				fire.store_bulk(piece)
+			fire._settle()
 		if spec.mode == "family_work":
 			# Real autonomous family work using the fixture's Chapter III material stock.
 			story.family.craft.starts_at = fire.time
