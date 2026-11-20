@@ -1,3 +1,5 @@
+> Latest development preview: [bulk firewood handoff](BULK_FIREWOOD_HANDOFF.md), implementation `b106a6f` on `codex/bulk-firewood-storage`, based on PR #3 / `118eed0`. Mainline release details below remain historical.
+
 # Firetender engine handoff · November 20, 2026
 
 ## Completed
