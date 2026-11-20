@@ -93,6 +93,12 @@ var wet_buttons: Dictionary = {}
 var wet_tray_buttons: Dictionary = {}
 var return_tool := View.Tool.WOOD
 var recall_button: Button
+var fuel_store_panel: Panel
+var fuel_store_message := ""
+var fuel_store_kind := -1
+var fuel_store_types: OptionButton
+var fuel_store_revision := -1
+var fuel_store_status: Label
 var hint: Label
 var time_label: Label
 var note: Label
@@ -214,6 +220,10 @@ func _ready() -> void:
 	add_child(sound)
 	fire.structure_event.connect(sound.structure_event)
 	fire.tinder_finished.connect(_on_tinder_finished)
+	view.storage_selected.connect(func(zone: String):
+		if fuel_store_panel == null or not fuel_store_panel.visible:
+			_toggle_fuel_stores()
+		_update_fuel_stores("%s · Select a fuel type, then draw a piece." % ("Reserve" if zone == "reserve" else "Drying rails")))
 	view.placed.connect(_placed)
 	view.cancelled.connect(_cancel)
 	view.moved.connect(func(piece: Fire.Piece) -> void:
@@ -278,6 +288,11 @@ func _ready() -> void:
 		profiles.read_preferences()
 		_pause()
 		show_title()
+		# Bundled playtest fixtures load directly, without installing or replacing a profile slot.
+		for argument in OS.get_cmdline_user_args():
+			if argument.begins_with("--playtest-save="):
+				_load_playtest.call_deferred(argument.trim_prefix("--playtest-save="))
+				break
 	elif start_in_story:
 		_start_chapter()
 	else:
@@ -1013,6 +1028,8 @@ func _hearth_overlay_open() -> bool:
 	return history_panel.visible or debug.visible or palette.visible or settings_panel.visible or ask_panel.visible or (torch_panel != null and torch_panel.visible)
 
 func _process(delta: float) -> void:
+	if fuel_store_panel != null and fuel_store_panel.visible:
+		_update_fuel_stores()
 	if story_menu != null and story_menu.visible:
 		return
 	_rotate_held(delta)
@@ -1155,6 +1172,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			if not _hearth_overlay_open():
 				view.context_material()
 		KEY_B:
+			if event.ctrl_pressed:
+				_toggle_fuel_stores()
+				return
 			if _hearth_overlay_open():
 				return
 			if view.tool == View.Tool.BREATH and view.placing < 0:
@@ -1212,7 +1232,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			if continuous:
 				held_turns[event.keycode] = event.alt_pressed
 		KEY_ESCAPE:
-			if view.cancel_material():
+			if fuel_store_panel != null and fuel_store_panel.visible:
+				fuel_store_panel.hide()
+			elif view.cancel_material():
 				pass
 			elif family_page.family_panel.visible or not family_page.station.is_empty():
 				family_page.close()
@@ -1849,7 +1871,8 @@ func _open_family() -> void:
 	family_news_seen = chapter.family.news_revision
 	_update_chapter()
 	_update_speaker()
-	hint.text = "Find Bera at the hunters’ board. Click or drag materials · I inspects · V works the object."
+	hint.text = "Ctrl+B: clan firewood · Find Bera at the hunters’ board. I inspects · V works the object."
+	mentor.text = "Rusk puts dry deadwood in the reserve and damp wood on the rails. Drag cold wood back onto a pile; click a pile to see what’s there. Ctrl+B opens the stores."
 
 func _save_family() -> void:
 	if launch_at_title:
@@ -1937,6 +1960,9 @@ func _restore_family_view(state: Dictionary) -> void:
 			break
 
 func _reset_family() -> void:
+	fuel_store_revision = -1
+	if fuel_store_panel != null:
+		fuel_store_panel.hide()
 	if family_page == null:
 		return
 	family_page.attach(null)
@@ -2054,6 +2080,9 @@ func _story_journal(story: bool) -> void:
 	_layout_consultation()
 
 func _focus_woodpile() -> void:
+	if chapter != null and chapter.family != null:
+		_toggle_fuel_stores()
+		return
 	if chapter == null or _hearth_overlay_open():
 		return
 	view.workbench.focus_on(Vector3(-1.92, 0.12, clampf(-0.88 - float(Chapter.Shelter.DEPTHS[chapter.weather.site]), -1.32, 0.5)))
@@ -2448,3 +2477,89 @@ func _style(tint: Color, border: Color) -> StyleBoxFlat:
 
 
 
+
+# Chapter III bulk operations deliberately leave the hearth's placed fuel alone.
+func _toggle_fuel_stores() -> void:
+	if chapter == null or chapter.family == null:
+		return
+	if fuel_store_panel != null:
+		fuel_store_panel.visible = not fuel_store_panel.visible
+		_update_fuel_stores()
+		return
+	fuel_store_panel = Panel.new()
+	fuel_store_panel.position = Vector2(20, 145)
+	fuel_store_panel.size = Vector2(360, 485)
+	var backing := StyleBoxFlat.new()
+	backing.bg_color = Color(0.12, 0.09, 0.065, 0.98)
+	backing.border_color = Color(0.45, 0.32, 0.20)
+	backing.set_border_width_all(1)
+	fuel_store_panel.add_theme_stylebox_override("panel", backing)
+	add_child(fuel_store_panel)
+	_label(fuel_store_panel, "Clan firewood · Ctrl+B closes", Rect2(12, 8, 330, 30), 20, TEXT)
+	fuel_store_status = _label(fuel_store_panel, "", Rect2(12, 42, 330, 70), 15, TEXT)
+	fuel_store_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var kinds := OptionButton.new()
+	fuel_store_types = kinds
+	kinds.position = Vector2(12, 112)
+	kinds.size = Vector2(336, 32)
+	kinds.add_item("Any useful piece", -1)
+	for kind in Fire.SPECIES.size():
+		kinds.add_item(Fire.SPECIES[kind].label, kind)
+	kinds.item_selected.connect(func(index): fuel_store_kind = -1 if index == 0 else kinds.get_item_id(index))
+	fuel_store_panel.add_child(kinds)
+	var actions := [
+		["Draw dry piece", func(): _draw_store("reserve", fuel_store_kind)],
+		["Draw damp piece for targeted drying", func(): _draw_store("drying", fuel_store_kind)],
+		["Move four reserve pieces onto rails", func(): _transfer_store("reserve", "drying")],
+		["Move four rail pieces into reserve", func(): _transfer_store("drying", "reserve")],
+		["Unload loose cold stock (keeps hearth intact)", _unload_cold_stock],
+		["Look at reserve and drying rails", _focus_fuel_stores],
+	]
+	for i in actions.size():
+		_button(fuel_store_panel, actions[i][0], Rect2(12, 155 + i * 45, 336, 38), actions[i][1])
+	_update_fuel_stores()
+
+func _update_fuel_stores(message := "") -> void:
+	if not message.is_empty():
+		fuel_store_message = message
+	if fuel_store_types != null and fuel_store_revision != fire.storage_revision:
+		fuel_store_revision = fire.storage_revision
+		for kind in Fire.SPECIES.size():
+			var text := "%s · %d reserve / %d drying" % [Fire.SPECIES[kind].label,
+				fire.bulk_pieces("reserve", kind).size(), fire.bulk_pieces("drying", kind).size()]
+			fuel_store_types.set_item_text(kind + 1, text)
+			fuel_store_types.get_popup().set_item_tooltip(kind + 1, text)
+	if fuel_store_status != null:
+		fuel_store_status.text = "Reserve: %d · Drying rails: %d\n%s" % [fire.bulk_pieces("reserve").size(), fire.bulk_pieces("drying").size(), fuel_store_message]
+
+func _draw_store(zone: String, kind: int) -> void:
+	var stores = view.workbench.family_props.fuel_stores
+	var landing: Vector2 = stores.ready_at if stores != null else Vector2(-1.05, -0.70)
+	var piece := fire.draw_bulk(zone, kind, landing)
+	_update_fuel_stores("No matching fuel here." if piece == null else "One piece laid beside the hearth. Move it normally.")
+	if piece != null:
+		view.workbench.focus_on(Vector3(piece.at.x, 0.1, piece.at.y))
+
+func _transfer_store(source: String, target: String) -> void:
+	_update_fuel_stores("Moved %d pieces." % fire.transfer_bulk(source, target))
+
+func _unload_cold_stock() -> void:
+	var moved := 0
+	for piece in fire.stored.duplicate():
+		if not fire.is_bulk(piece) and fire.store_bulk(piece):
+			moved += 1
+	if moved > 0:
+		fire._settle(true)
+	_update_fuel_stores("Unloaded %d cold pieces. Hot and placed hearth fuel stays in use." % moved)
+
+func _load_playtest(path: String) -> void:
+	if _load_story(path):
+		print("External playtest loaded: chapter ", ChapterSave.act(chapter),
+			", bulk records ", fire.bulk_stock.size(), ", Rusk route ", chapter.away,
+			", carried pieces ", chapter.carried_load.size())
+	else:
+		push_warning("The external playtest save could not be loaded.")
+
+func _focus_fuel_stores() -> void:
+	var center: Vector2 = (fire.storage_sites.reserve + fire.storage_sites.drying) * 0.5
+	view.workbench.focus_on(Vector3(center.x, 0.15, center.y))

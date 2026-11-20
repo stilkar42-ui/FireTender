@@ -430,6 +430,8 @@ func _store_piece(kind: int, moisture: float, wet_skin := false, temperature := 
 			fire._sync_sections(piece)
 	if sequel != null:
 		sequel.track(piece)
+	if family != null:
+		fire.store_bulk(piece, "drying" if wet_skin or moisture >= 0.34 else "reserve")
 	return piece
 
 func gathering_advice() -> String:

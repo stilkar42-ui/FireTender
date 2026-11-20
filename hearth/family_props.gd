@@ -3,6 +3,7 @@ extends Node3D
 
 const Family := preload("res://sim/red_hollow_family.gd")
 const Work := Family.Workshop
+const Fire := Family.Fire
 const Worker := preload("res://hearth/family_worker.gd")
 const Paint := preload("res://hearth/painted_material.gd")
 const GOLD := Color("#d5a66d")
@@ -39,6 +40,8 @@ const STYLES := {
 }
 const FOOD_INK := {"Raw": "#b65543", "Undercooked": "#9d583e", "Dried": "#ad7651",
 	"Roasted": "#744532", "Overcooked": "#51372c", "Charred": "#282221"}
+const FuelStores := preload("res://hearth/fuel_stores.gd")
+var fuel_stores: FuelStores
 var model: Work
 var family: Family
 var roast: Node3D
@@ -513,3 +516,14 @@ func _sync_hand() -> void:
 	item.visible = held_preview.is_finite()
 	if item.visible:
 		item.position = held_preview
+
+func _process(_elapsed: float) -> void:
+	if model == null:
+		return
+	if fuel_stores == null:
+		fuel_stores = FuelStores.new()
+		add_child(fuel_stores)
+	fuel_stores.sync(model.fire)
+	if camera != null:
+		var size := camera.get_viewport().get_visible_rect().size
+		fuel_stores.keep_labels_in_view(camera, Rect2(size * Vector2(0.28, 0.26), size * Vector2(0.44, 0.54)))

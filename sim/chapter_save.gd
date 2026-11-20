@@ -9,7 +9,7 @@ const Mentor := preload("res://sim/mentor.gd")
 const VERSION := 5
 const MAX_BYTES := 24 * 1024 * 1024
 const MAX_STATE_BYTES := 128 * 1024 * 1024
-const FIRE_SKIP := ["wood", "stored", "coals", "sparks", "breaths", "falling", "cells", "shelter", "smoke_field",
+const FIRE_SKIP := ["storage_sites", "bulk_stock", "wood", "stored", "coals", "sparks", "breaths", "falling", "cells", "shelter", "smoke_field",
 	"nodes", "links", "radiant_links", "fuel_stock", "network_geometry", "network_material",
 	"_links", "_radiant_links", "packed_topology", "packed_radiant_count",
 	"seat_cache", "support_geometry", "support_geometry_serial", "network_candidates", "network_occluders",
@@ -317,6 +317,8 @@ static func _put(object: Object, data: Dictionary, skip: Array = []) -> bool:
 static func _capture_fire(fire: Fire) -> Dictionary:
 	var indices := {}
 	var fields := _plain(fire, FIRE_SKIP)
+	fields.bulk_stock = fire.bulk_stock.duplicate()
+	fields.storage_sites = fire.storage_sites.duplicate()
 	for group: String in ["wood", "stored", "coals"]:
 		var parts: Array[Dictionary] = []
 		for piece: Fire.Piece in fire.get(group):
@@ -380,6 +382,21 @@ static func _restore_fire(fire: Fire, data: Dictionary) -> bool:
 		var pieces: Array[Fire.Piece] = []
 		pieces.assign(result)
 		fire.set(group, pieces)
+	var sites: Variant = data.get("storage_sites", {"reserve": Fire.RESERVE_AT, "drying": Fire.DRYING_AT})
+	if not sites is Dictionary:
+		return false
+	for zone in ["reserve", "drying"]:
+		if not sites.get(zone) is Vector2 or not sites[zone].is_finite() or fire.in_hearth(sites[zone]):
+			return false
+	fire.storage_sites = sites.duplicate()
+	fire.bulk_stock.clear()
+	var bulk: Variant = data.get("bulk_stock", {})
+	if not bulk is Dictionary:
+		return false
+	for id in bulk:
+		if not id is int or bulk[id] not in ["reserve", "drying"] or not fire.stored.any(func(piece): return piece.id == id and piece.pose == null):
+			return false
+		fire.bulk_stock[id] = bulk[id]
 	fire.breaths.clear()
 	fire.falling.clear()
 	fire.sparks.clear()

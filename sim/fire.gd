@@ -309,6 +309,12 @@ var shelter: Shelter
 var smoke_field := SmokeField.new()
 var ground_wetness := 0.0
 var stored: Array[Piece] = []
+# Full fuel records, without individual support/render geometry while pooled.
+var bulk_stock: Dictionary = {}
+const RESERVE_AT := Vector2(-2.04, -2.30)
+const DRYING_AT := Vector2(-2.05, -3.22)
+var storage_sites := {"reserve": RESERVE_AT, "drying": DRYING_AT}
+
 var next_rest_order := 1
 var storage_revision := 0
 var storage_dirty := true
@@ -404,6 +410,7 @@ func setup(scenario: int) -> void:
 	ground_wetness = 0.0
 	shelter = null
 	stored.clear()
+	bulk_stock.clear()
 	storage_revision += 1
 	storage_sample = 0.0
 	storage_dirty = true
@@ -924,11 +931,79 @@ func receive_fuel(kind: int, at: Vector2, yaw: float, tier: int, moisture := -1.
 	storage_revision += 1
 	return piece
 
+func is_bulk(piece: Piece) -> bool:
+	return bulk_stock.has(piece.id)
+
+func store_bulk(piece: Piece, zone := "") -> bool:
+	if shelter == null or not has_fuel(piece) or not _quiet_stock(piece) or tinder_in_use(piece):
+		return false
+	if zone.is_empty():
+		zone = "reserve" if bulk_ready(piece) else "drying"
+	if zone not in ["reserve", "drying"]:
+		return false
+	var target: Vector2 = storage_sites[zone]
+	if not target.is_finite() or in_hearth(target):
+		return false
+	if piece.pose != null:
+		supports_dirty = true
+	if piece in wood:
+		network_dirty = true
+	wood.erase(piece)
+	if piece not in stored:
+		stored.append(piece)
+	piece.at = target
+	piece.pose = null
+	piece.airborne = false
+	piece.rolling = false
+	piece.roll_velocity = Vector2.ZERO
+	bulk_stock[piece.id] = zone
+	for section in piece.sections:
+		section.at = target
+		for region: Piece in section.faces + section.inner + [section.core]:
+			region.at = target
+	storage_dirty = true
+	storage_revision += 1
+	revision += 1
+	_invalidate_wind_stock()
+	return true
+
+func bulk_pieces(zone: String, kind := -1) -> Array[Piece]:
+	return stored.filter(func(piece: Piece): return bulk_stock.get(piece.id, "") == zone and (kind < 0 or piece.kind == kind))
+
+func bulk_ready(piece: Piece) -> bool:
+	if piece.water / maxf(piece.original, 0.000001) >= 0.34:
+		return false
+	for section in piece.sections:
+		for face in section.faces:
+			if face.water / maxf(face.original, 0.000001) >= 0.34:
+				return false
+	return true
+
+func draw_bulk(zone: String, kind := -1, landing := Vector2(-1.05, -0.70)) -> Piece:
+	var choices := bulk_pieces(zone, kind)
+	if zone == "reserve":
+		choices = choices.filter(bulk_ready)
+	if choices.is_empty():
+		return null
+	var piece: Piece = choices[0]
+	if not pose_fuel(piece, landing, default_yaw(piece.id), 0.0, 0):
+		return null
+	return piece
+
+func transfer_bulk(source: String, target: String, count := 4) -> int:
+	var moved := 0
+	for piece in bulk_pieces(source):
+		if moved >= count:
+			break
+		if store_bulk(piece, target):
+			moved += 1
+	return moved
+
 func seat_new_stock() -> void:
 	_invalidate_wind_stock()
 	# A new delivery needs a pose immediately. Existing pieces keep their
 	# rests and any fall in progress until the simulation advances.
-	var arrivals := stored.filter(func(piece: Piece): return piece.pose == null)
+	var arrivals := stored.filter(func(piece: Piece): return piece.pose == null and not is_bulk(piece))
 	arrivals.sort_custom(func(a: Piece, b: Piece):
 		return a.tier < b.tier if a.tier != b.tier else a.rest_order < b.rest_order)
 	for piece in arrivals:
@@ -1097,6 +1172,7 @@ func feed_stock(piece: Piece, landing: Structure.Pose) -> bool:
 	if piece in stored:
 		stored.erase(piece)
 		wood.append(piece)
+	bulk_stock.erase(piece.id)
 	piece.at = landing.at
 	piece.axis = landing.axis
 	piece.lean = landing.slope
@@ -1267,6 +1343,7 @@ func pose_fuel(piece: Piece, at: Vector2, yaw: float, lean: float, tier: int, pr
 			return false
 		stored.erase(piece)
 		wood.append(piece)
+	bulk_stock.erase(piece.id)
 	piece.at = next
 	piece.axis = Vector2.from_angle(yaw)
 	piece.lean = clampf(lean, -Structure.MAX_SLOPE, Structure.MAX_SLOPE)
@@ -1314,7 +1391,7 @@ func _settle(gravity := false, fall_step := 0.0, moved_piece: Piece = null) -> v
 	supports_dirty = false
 	wear_dirty = false
 	last_settle = time
-	var ordered := all_fuel().duplicate()
+	var ordered := all_fuel().filter(func(piece: Piece): return not is_bulk(piece))
 	ordered.sort_custom(func(a: Piece, b: Piece) -> bool:
 		if a.tier != b.tier:
 			return a.tier < b.tier
@@ -2784,7 +2861,7 @@ func _quiet_stock(piece: Piece) -> bool:
 func _refresh_storage_membership() -> void:
 	for i in range(stored.size() - 1, -1, -1):
 		var piece := stored[i]
-		if in_hearth(piece.at) or _near_hot_fuel(piece):
+		if not is_bulk(piece) and (in_hearth(piece.at) or _near_hot_fuel(piece)):
 			stored.remove_at(i)
 			wood.append(piece)
 			network_dirty = true

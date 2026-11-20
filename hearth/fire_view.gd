@@ -58,6 +58,7 @@ var feed_height := 0.035
 var feed_blocked := false
 
 signal placed(piece: Fire.Piece)
+signal storage_selected(zone: String)
 signal moved(piece: Fire.Piece)
 signal rolled(piece: Fire.Piece)
 signal arranged(piece: Fire.Piece)
@@ -120,6 +121,8 @@ func reset_scene() -> void:
 	workbench.reset_scene()
 
 func _process(delta: float) -> void:
+	if dragging == null and workbench.family_props.fuel_stores != null:
+		workbench.family_props.fuel_stores.highlight("")
 	seconds += delta
 	queue_redraw()
 
@@ -216,6 +219,11 @@ func _refresh_drop() -> void:
 	drop_pose = null
 	drop_tier = build_tier
 	if fire == null or (placing < 0 and dragging == null):
+		return
+	var store_zone := _storage_zone(pointer) if dragging != null else ""
+	if workbench.family_props.fuel_stores != null:
+		workbench.family_props.fuel_stores.highlight(store_zone)
+	if not store_zone.is_empty():
 		return
 	if tool == Tool.FEED:
 		if probe_valid:
@@ -327,6 +335,12 @@ func _gui_input(event: InputEvent) -> void:
 			torch_selected.emit()
 			accept_event()
 			return
+		if event.pressed and tool == Tool.WOOD and placing < 0 and dragging == null and _wood_under(pointer) == null:
+			var zone := _storage_zone(pointer)
+			if not zone.is_empty():
+				storage_selected.emit(zone)
+				accept_event()
+				return
 		if tool == Tool.WOOD and placing < 0 and _material_click(event):
 			accept_event()
 			return
@@ -336,6 +350,8 @@ func _gui_input(event: InputEvent) -> void:
 			return
 		if not event.pressed:
 			if dragging != null:
+				if _drop_in_storage():
+					return
 				_refresh_drop()
 				if drop_pose != null and (pointer.distance_to(grab_start) > 3.0 or drag_edited):
 					if tool == Tool.FEED:
@@ -778,3 +794,25 @@ func _hash(seed: int) -> float:
 
 
 
+
+func _storage_zone(screen: Vector2) -> String:
+	var props := workbench.family_props
+	if props.model == null or props.fuel_stores == null:
+		return ""
+	return props.fuel_stores.zone_at(workbench, screen)
+
+func _drop_in_storage() -> bool:
+	var zone := _storage_zone(pointer)
+	if zone.is_empty() or dragging == null:
+		return false
+	var piece := dragging
+	if fire.store_bulk(piece, zone):
+		fire._settle(true)
+		material_feedback.emit("Stored %s in %s." % [Fire.SPECIES[piece.kind].label, "the reserve" if zone == "reserve" else "the drying rails"])
+	else:
+		material_feedback.emit("That piece is hot or in use. Leave it clear of the stored wood.")
+	dragging = null
+	selected = null
+	drop_pose = null
+	workbench.family_props.fuel_stores.highlight("")
+	return true

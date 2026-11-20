@@ -1,3 +1,5 @@
+> Latest development preview: [bulk firewood handoff](BULK_FIREWOOD_HANDOFF.md) on `codex/bulk-firewood-storage`, based on PR #3 / `118eed0`, reviewed separately in Draft PR #4. Includes neat visible stacks, direct drag-to-store and reusable saved storage locations. The package Build.txt records the exact commit. Mainline release details below remain historical.
+
 # Firetender engine handoff · November 20, 2026
 
 ## Completed
