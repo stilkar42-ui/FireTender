@@ -313,6 +313,7 @@ var stored: Array[Piece] = []
 var bulk_stock: Dictionary = {}
 const RESERVE_AT := Vector2(-2.04, -2.30)
 const DRYING_AT := Vector2(-2.05, -3.22)
+var storage_sites := {"reserve": RESERVE_AT, "drying": DRYING_AT}
 
 var next_rest_order := 1
 var storage_revision := 0
@@ -940,7 +941,9 @@ func store_bulk(piece: Piece, zone := "") -> bool:
 		zone = "reserve" if bulk_ready(piece) else "drying"
 	if zone not in ["reserve", "drying"]:
 		return false
-	var target := DRYING_AT if zone == "drying" else RESERVE_AT
+	var target: Vector2 = storage_sites[zone]
+	if not target.is_finite() or in_hearth(target):
+		return false
 	if piece.pose != null:
 		supports_dirty = true
 	if piece in wood:
@@ -976,14 +979,14 @@ func bulk_ready(piece: Piece) -> bool:
 				return false
 	return true
 
-func draw_bulk(zone: String, kind := -1) -> Piece:
+func draw_bulk(zone: String, kind := -1, landing := Vector2(-1.05, -0.70)) -> Piece:
 	var choices := bulk_pieces(zone, kind)
 	if zone == "reserve":
 		choices = choices.filter(bulk_ready)
 	if choices.is_empty():
 		return null
 	var piece: Piece = choices[0]
-	if not pose_fuel(piece, Vector2(-1.05, -0.70), default_yaw(piece.id), 0.0, 0):
+	if not pose_fuel(piece, landing, default_yaw(piece.id), 0.0, 0):
 		return null
 	return piece
 

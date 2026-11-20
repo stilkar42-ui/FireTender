@@ -20,6 +20,9 @@ func _run() -> void:
 	shortcut.pressed = true
 	lab._unhandled_key_input(shortcut)
 	check(lab.fuel_store_panel != null and lab.fuel_store_panel.visible, "Ctrl+B opens stores without replacing breath")
+	lab.fuel_store_types.item_selected.emit(1)
+	lab.fuel_store_types.item_selected.emit(0)
+	check(lab.fuel_store_kind == -1, "Any useful piece remains available after selecting a type")
 	lab._unload_cold_stock()
 	var story: Chapter = lab.chapter
 	var fire := story.fire
@@ -38,6 +41,58 @@ func _run() -> void:
 		check(wet != null and fire.pose_fuel(wet, Vector2(-0.8 + i * 0.28, -0.7), PI * 0.5, 0, 0), "Place a damp piece for targeted heat")
 	for i in 8:
 		story.step()
+	# Exercise mouse press/motion/release through the actual view, not just the model API.
+	lab.fuel_store_panel.hide()
+	lab.family_page.close()
+	lab.view.workbench.focus_on(Vector3(-1.8, 0.1, -1.8))
+	for i in 40: await process_frame
+	var returned := fire.draw_bulk("reserve", 1)
+	check(returned != null, "A cold stock piece can be drawn for the drag test")
+	if returned != null:
+		for zone in ["reserve", "drying"]:
+			fire.pose_fuel(returned, Vector2(-1.15, -1.5), 0, 0, 0)
+			for i in 3: await process_frame
+			var from: Vector2 = lab.view.workbench.project(returned.pose.point(0))
+			var site: Vector2 = fire.storage_sites[zone]
+			var to: Vector2 = lab.view.workbench.project(Vector3(site.x, site.y, 0))
+			var press := InputEventMouseButton.new()
+			press.position = from
+			press.button_index = MOUSE_BUTTON_LEFT
+			press.pressed = true
+			lab.view._gui_input(press)
+			check(lab.view.dragging == returned, "Mouse picks up the individual piece")
+			var motion := InputEventMouseMotion.new()
+			motion.position = to
+			lab.view._gui_input(motion)
+			check(lab.view.workbench.family_props.fuel_stores.hovered == zone, "Drag highlights " + zone)
+			var release := InputEventMouseButton.new()
+			release.position = to
+			release.button_index = MOUSE_BUTTON_LEFT
+			lab.view._gui_input(release)
+			check(fire.bulk_stock.get(returned.id) == zone and returned.pose == null, "Dropping wood stores it in " + zone)
+	if returned != null:
+		fire.pose_fuel(returned, Vector2(-1.15, -1.5), 0, 0, 0)
+		returned.temperature = 220.0
+		var before := returned.at
+		lab.view.dragging = returned
+		var site: Vector2 = fire.storage_sites.reserve
+		lab.view.pointer = lab.view.workbench.project(Vector3(site.x, site.y, 0))
+		check(lab.view._drop_in_storage() and not fire.is_bulk(returned) and returned.at == before, "Hot wood is rejected by the actual drop handler")
+	var click := InputEventMouseButton.new()
+	var site: Vector2 = fire.storage_sites.reserve
+	click.position = lab.view.workbench.project(Vector3(site.x, site.y, 0))
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	lab.view._gui_input(click)
+	check(lab.fuel_store_panel.visible, "Clicking a pile opens its readable inventory")
+	lab.fuel_store_panel.hide()
+	var display = lab.view.workbench.family_props.fuel_stores
+	var empty := Chapter.new(Chapter.Fire.new())
+	empty.fire.storage_revision = fire.storage_revision
+	display.sync(empty.fire)
+	check(display.labels.reserve.text.begins_with("DRY RESERVE · 0"), "A different camp refreshes even with the same revision")
+	display.sync(fire)
+	check(display.labels.reserve.text.begins_with("DRY RESERVE · %d" % fire.bulk_pieces("reserve").size()), "Returning to this camp restores its visible inventory")
 	var state := Save.capture(story)
 	var restored := Chapter.new(Chapter.Fire.new())
 	check(Save.restore(restored, bytes_to_var(var_to_bytes(state))), "Rendered loop saves and reloads")

@@ -96,6 +96,8 @@ var recall_button: Button
 var fuel_store_panel: Panel
 var fuel_store_message := ""
 var fuel_store_kind := -1
+var fuel_store_types: OptionButton
+var fuel_store_revision := -1
 var fuel_store_status: Label
 var hint: Label
 var time_label: Label
@@ -218,6 +220,10 @@ func _ready() -> void:
 	add_child(sound)
 	fire.structure_event.connect(sound.structure_event)
 	fire.tinder_finished.connect(_on_tinder_finished)
+	view.storage_selected.connect(func(zone: String):
+		if fuel_store_panel == null or not fuel_store_panel.visible:
+			_toggle_fuel_stores()
+		_update_fuel_stores("%s · Select a fuel type, then draw a piece." % ("Reserve" if zone == "reserve" else "Drying rails")))
 	view.placed.connect(_placed)
 	view.cancelled.connect(_cancel)
 	view.moved.connect(func(piece: Fire.Piece) -> void:
@@ -1866,7 +1872,7 @@ func _open_family() -> void:
 	_update_chapter()
 	_update_speaker()
 	hint.text = "Ctrl+B: clan firewood · Find Bera at the hunters’ board. I inspects · V works the object."
-	mentor.text = "Rusk lays dry deadwood in the wall reserve, damp wood on the low rails. Take only what you need; bring damp pieces toward the heat. Keep tinder in the bark tray. Ctrl+B opens the stores."
+	mentor.text = "Rusk puts dry deadwood in the reserve and damp wood on the rails. Drag cold wood back onto a pile; click a pile to see what’s there. Ctrl+B opens the stores."
 
 func _save_family() -> void:
 	if launch_at_title:
@@ -1954,6 +1960,7 @@ func _restore_family_view(state: Dictionary) -> void:
 			break
 
 func _reset_family() -> void:
+	fuel_store_revision = -1
 	if fuel_store_panel != null:
 		fuel_store_panel.hide()
 	if family_page == null:
@@ -2492,12 +2499,13 @@ func _toggle_fuel_stores() -> void:
 	fuel_store_status = _label(fuel_store_panel, "", Rect2(12, 42, 330, 70), 15, TEXT)
 	fuel_store_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	var kinds := OptionButton.new()
+	fuel_store_types = kinds
 	kinds.position = Vector2(12, 112)
 	kinds.size = Vector2(336, 32)
 	kinds.add_item("Any useful piece", -1)
 	for kind in Fire.SPECIES.size():
 		kinds.add_item(Fire.SPECIES[kind].label, kind)
-	kinds.item_selected.connect(func(index): fuel_store_kind = kinds.get_item_id(index))
+	kinds.item_selected.connect(func(index): fuel_store_kind = -1 if index == 0 else kinds.get_item_id(index))
 	fuel_store_panel.add_child(kinds)
 	var actions := [
 		["Draw dry piece", func(): _draw_store("reserve", fuel_store_kind)],
@@ -2505,7 +2513,7 @@ func _toggle_fuel_stores() -> void:
 		["Move four reserve pieces onto rails", func(): _transfer_store("reserve", "drying")],
 		["Move four rail pieces into reserve", func(): _transfer_store("drying", "reserve")],
 		["Unload loose cold stock (keeps hearth intact)", _unload_cold_stock],
-		["Look at reserve and drying rails", func(): view.workbench.focus_on(Vector3(-2.05, 0.15, -2.65))],
+		["Look at reserve and drying rails", _focus_fuel_stores],
 	]
 	for i in actions.size():
 		_button(fuel_store_panel, actions[i][0], Rect2(12, 155 + i * 45, 336, 38), actions[i][1])
@@ -2514,11 +2522,20 @@ func _toggle_fuel_stores() -> void:
 func _update_fuel_stores(message := "") -> void:
 	if not message.is_empty():
 		fuel_store_message = message
+	if fuel_store_types != null and fuel_store_revision != fire.storage_revision:
+		fuel_store_revision = fire.storage_revision
+		for kind in Fire.SPECIES.size():
+			var text := "%s · %d reserve / %d drying" % [Fire.SPECIES[kind].label,
+				fire.bulk_pieces("reserve", kind).size(), fire.bulk_pieces("drying", kind).size()]
+			fuel_store_types.set_item_text(kind + 1, text)
+			fuel_store_types.get_popup().set_item_tooltip(kind + 1, text)
 	if fuel_store_status != null:
 		fuel_store_status.text = "Reserve: %d · Drying rails: %d\n%s" % [fire.bulk_pieces("reserve").size(), fire.bulk_pieces("drying").size(), fuel_store_message]
 
 func _draw_store(zone: String, kind: int) -> void:
-	var piece := fire.draw_bulk(zone, kind)
+	var stores = view.workbench.family_props.fuel_stores
+	var landing: Vector2 = stores.ready_at if stores != null else Vector2(-1.05, -0.70)
+	var piece := fire.draw_bulk(zone, kind, landing)
 	_update_fuel_stores("No matching fuel here." if piece == null else "One piece laid beside the hearth. Move it normally.")
 	if piece != null:
 		view.workbench.focus_on(Vector3(piece.at.x, 0.1, piece.at.y))
@@ -2542,3 +2559,7 @@ func _load_playtest(path: String) -> void:
 			", carried pieces ", chapter.carried_load.size())
 	else:
 		push_warning("The external playtest save could not be loaded.")
+
+func _focus_fuel_stores() -> void:
+	var center: Vector2 = (fire.storage_sites.reserve + fire.storage_sites.drying) * 0.5
+	view.workbench.focus_on(Vector3(center.x, 0.15, center.y))

@@ -40,9 +40,8 @@ const STYLES := {
 }
 const FOOD_INK := {"Raw": "#b65543", "Undercooked": "#9d583e", "Dried": "#ad7651",
 	"Roasted": "#744532", "Overcooked": "#51372c", "Charred": "#282221"}
-var fuel_display: Node3D
-var fuel_signature := ""
-var bulk_visuals := {"reserve": [], "drying": []}
+const FuelStores := preload("res://hearth/fuel_stores.gd")
+var fuel_stores: FuelStores
 var model: Work
 var family: Family
 var roast: Node3D
@@ -521,41 +520,10 @@ func _sync_hand() -> void:
 func _process(_elapsed: float) -> void:
 	if model == null:
 		return
-	var fire := model.fire
-	var signature := str(fire.bulk_stock)
-	if signature == fuel_signature:
-		return
-	fuel_signature = signature
-	if fuel_display == null:
-		fuel_display = Node3D.new()
-		add_child(fuel_display)
-		# Low rough rails are a reconstruction; they leave the central passage open.
-		for z in [-3.43, -3.02]:
-			_beam(fuel_display, Vector3(-2.48, 0.10, z), Vector3(-1.62, 0.10, z), 0.025, "#806045")
-		_slab(fuel_display, Vector3(-1.02, 0.045, -0.68), Vector3(0.30, 0.025, 0.22), "#92704e", Paint.Surface.SPLIT_WOOD)
-		for z in [-0.79, -0.57]:
-			_beam(fuel_display, Vector3(-1.18, 0.07, z), Vector3(-0.87, 0.07, z), 0.018, "#65482f")
-	for zone in ["reserve", "drying"]:
-		var pieces := fire.bulk_pieces(zone)
-		var at := Fire.RESERVE_AT if zone == "reserve" else Fire.DRYING_AT
-		var count := mini(pieces.size(), 80)
-		# Retain display meshes across withdrawals instead of allocating the pile again.
-		var visuals: Array = bulk_visuals[zone]
-		while visuals.size() < count:
-			var limb := Node3D.new()
-			fuel_display.add_child(limb)
-			var index := visuals.size()
-			var end := Vector3(sin(index * 1.7) * 0.09, 0.014, 0.5)
-			_beam(limb, -end, end, 0.03, "#70503a")
-			if index % 3 == 0:
-				_beam(limb, Vector3.ZERO, Vector3(0.16, 0.045, 0.30), 0.009, "#806047")
-			visuals.append(limb)
-		for i in visuals.size():
-			var limb: Node3D = visuals[i]
-			limb.visible = i < count
-			if i >= count:
-				continue
-			var piece: Fire.Piece = pieces[i]
-			limb.position = Vector3(at.x + (i % 6 - 2.5) * 0.105,
-				0.14 + (i / 6) * 0.028 * maxf(1.0, sqrt(pieces.size() / 80.0)), at.y + sin(i * 2.17) * 0.12)
-			limb.scale = Vector3(clampf(piece.radius, 0.009, 0.045) / 0.03, 1.0, minf(piece.size, 0.92))
+	if fuel_stores == null:
+		fuel_stores = FuelStores.new()
+		add_child(fuel_stores)
+	fuel_stores.sync(model.fire)
+	if camera != null:
+		var size := camera.get_viewport().get_visible_rect().size
+		fuel_stores.keep_labels_in_view(camera, Rect2(size * Vector2(0.28, 0.26), size * Vector2(0.44, 0.54)))

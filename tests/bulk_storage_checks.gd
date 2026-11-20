@@ -36,6 +36,7 @@ func _run() -> void:
 	check(Save.capture(story).fire == Save.capture(restored).fire, "Regional environmental drying continues deterministically")
 	var legacy := Save.capture(story)
 	legacy.fire.erase("bulk_stock")
+	legacy.fire.erase("storage_sites")
 	check(Save.restore(Chapter.new(Fire.new()), legacy), "Older snapshots without bulk metadata still load")
 	# Save after pickup, before arrival; deliver the identical finite field records once.
 	for piece in fire.stored.duplicate():
@@ -64,6 +65,9 @@ func _run() -> void:
 	var skin := story._store_piece(10, 0.30, true, 12.0)
 	check(not fire.bulk_ready(skin) and fire.bulk_stock.get(skin.id) == "drying", "Dry core with wet skin still belongs on the rails")
 	check(fire.store_bulk(skin, "reserve") and not fire.bulk_ready(skin), "Transferring a wet surface into reserve does not make it ready")
+	fire.storage_sites["drying"] = Vector2(-1.8, -3.0)
+	check(fire.store_bulk(skin, "drying") and skin.at == Vector2(-1.8, -3.0), "Another camp can configure its storage location")
+	check(Save.restore(restored, bytes_to_var(var_to_bytes(Save.capture(story)))) and restored.fire.storage_sites == fire.storage_sites, "Storage layout survives save and reload")
 	print("Bulk storage: %d passed, %d failed" % [passed, failed])
 	quit(1 if failed else 0)
 
