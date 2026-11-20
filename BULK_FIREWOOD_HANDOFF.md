@@ -1,6 +1,6 @@
 # Bulk firewood playtest — 20 November 2026
 
-Implementation: `b106a6f`, branch `codex/bulk-firewood-storage`, based on Echo checkpoint `118eed0` (Draft PR #3). This remains a preview, separate from the bonfire review; no merge into main. The package's `Build.txt` identifies its exact final documentation/build commit.
+Initial implementation: `b106a6f`, branch `codex/bulk-firewood-storage`, based on Echo checkpoint `118eed0` (Draft PR #3). This remains a preview, separate from the bonfire review; no merge into main. The package's `Build.txt` identifies its exact final commit, including the wet-surface readiness guard. Review: [Draft PR #4](https://github.com/stilkar42-ui/FireTender/pull/4), targeting the bonfire branch.
 
 ## Try the delivery
 
@@ -8,7 +8,7 @@ Unzip `outputs/bulk-firewood/Firetender-Bulk-Firewood-Windows.zip` and run **Try
 
 - **Woodpile [L]** or **Ctrl+B** opens the stores; **B** still controls breath. Escape closes the stores.
 - Choose a fuel type (or any useful piece), then draw dry fuel from the reserve or damp fuel from the rails. The piece appears individually beside the hearth; drag/place/feed it normally. Missing types give feedback rather than creating a substitute.
-- Move four records between reserve and rails in one action. Reserve withdrawals require actual moisture below 34%; moving wet fuel into the reserve does not make it dry.
+- Move four records between reserve and rails in one action. Reserve withdrawals require actual moisture below 34%, including wet surfaces; moving wet fuel into the reserve does not make it dry.
 - Drag unused cold fuel away from the hearth, then **Unload loose cold stock** to return it in one action. Hot fuel and placed hearth wood stay in use. The same button consolidates loose cold stock from older saves, on request.
 - Rusk automatically unloads each returned armful together: dry records to the reserve, damp/wet or wet-surface records to the rails. Actual field condition is preserved; routine collection still excludes green wood.
 - F5 opens normal save slots; use an empty slot. F11 loads. No launcher installs or overwrites a profile/save. The included Chapter-II-stress.sav is optional and is not installed automatically.
@@ -24,7 +24,7 @@ Bulk records retain each original Piece, including identity, kind/species, size,
 ## Verification
 
 - Windows export: the actual packaged executable loaded the staged Chapter III save (49 bulk records, nine carried pieces) and the unchanged Chapter II stress save (zero bulk records), exited 0, and loaded its bundled native DLL. Profile file hashes were unchanged. Export/launch logs and DLL module evidence are in `outputs/bulk-firewood/`.
-- Bulk conservation/save checks: 16/0, native and GDScript fallback. Mixed-condition sorting, transfers, missing types, return, regional drying, legacy metadata absence, binary save/reload and Rusk's in-transit delivery match. Fixture generation writes only under outputs.
+- Bulk conservation/save checks: 18/0, native and GDScript fallback. Mixed-condition sorting, transfers, missing types, return, regional drying, legacy metadata absence, binary save/reload and Rusk's in-transit delivery match. Fixture generation writes only under outputs.
 - Rendered scripted loop: shortcut, wet delivery, dry kindling to hearth, three damp placements, save/reload through the actual workbench loader, and five camera/floor-picking approaches passed. This is scripted rendered verification, not a claim of a long manual playthrough.
 - Gathering 26/0; woodpile 26/0; combustion 46/0 including deterministic two-hour run; grain 30/0; construction 24/0; workbench 126/0; Chapter I–III journey 16/0; family 70/0; family scene 29/0; physical workshop 25/0; profiles/story menu 33/0.
 - Native/reference comparison: 33 graphs, 32,749 ordered candidate pairs, 31,761 accepted links, zero coefficient difference; 12 active-combustion continuation snapshots match.

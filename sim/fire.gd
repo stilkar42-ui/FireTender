@@ -937,7 +937,7 @@ func store_bulk(piece: Piece, zone := "") -> bool:
 	if shelter == null or not has_fuel(piece) or not _quiet_stock(piece) or tinder_in_use(piece):
 		return false
 	if zone.is_empty():
-		zone = "drying" if piece.water / maxf(piece.original, 0.000001) >= 0.34 else "reserve"
+		zone = "reserve" if bulk_ready(piece) else "drying"
 	if zone not in ["reserve", "drying"]:
 		return false
 	var target := DRYING_AT if zone == "drying" else RESERVE_AT
@@ -967,10 +967,19 @@ func store_bulk(piece: Piece, zone := "") -> bool:
 func bulk_pieces(zone: String, kind := -1) -> Array[Piece]:
 	return stored.filter(func(piece: Piece): return bulk_stock.get(piece.id, "") == zone and (kind < 0 or piece.kind == kind))
 
+func bulk_ready(piece: Piece) -> bool:
+	if piece.water / maxf(piece.original, 0.000001) >= 0.34:
+		return false
+	for section in piece.sections:
+		for face in section.faces:
+			if face.water / maxf(face.original, 0.000001) >= 0.34:
+				return false
+	return true
+
 func draw_bulk(zone: String, kind := -1) -> Piece:
 	var choices := bulk_pieces(zone, kind)
 	if zone == "reserve":
-		choices = choices.filter(func(piece: Piece): return piece.water / maxf(piece.original, 0.000001) < 0.34)
+		choices = choices.filter(bulk_ready)
 	if choices.is_empty():
 		return null
 	var piece: Piece = choices[0]

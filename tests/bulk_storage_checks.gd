@@ -61,5 +61,9 @@ func _run() -> void:
 	var a: Dictionary = Save.capture(story).fire
 	var b: Dictionary = Save.capture(restored).fire
 	check(a == b, "In-transit reload delivers identical fuel once")
+	var skin := story._store_piece(10, 0.30, true, 12.0)
+	check(not fire.bulk_ready(skin) and fire.bulk_stock.get(skin.id) == "drying", "Dry core with wet skin still belongs on the rails")
+	check(fire.store_bulk(skin, "reserve") and not fire.bulk_ready(skin), "Transferring a wet surface into reserve does not make it ready")
 	print("Bulk storage: %d passed, %d failed" % [passed, failed])
 	quit(1 if failed else 0)
+
