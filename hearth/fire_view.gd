@@ -82,6 +82,7 @@ func _ready() -> void:
 	workbench.scenery = scenery
 	add_child(workbench)
 	workbench.camera_changed.connect(_camera_moved)
+	workbench.geometry_changed.connect(_camera_moved)
 	var portrait := "res://hearth/fire_speaker.svg"
 	if ResourceLoader.exists(portrait):
 		speaker_art = load(portrait) as Texture2D

@@ -18,6 +18,7 @@ const ORBIT_SPEED := 0.009
 const TILT_SPEED := 0.007
 
 signal camera_changed
+signal geometry_changed
 
 class Hit:
 	var ground := Vector2.INF
@@ -522,6 +523,7 @@ func _refresh(delta: float) -> void:
 	if last_revision == fire.revision and last_weather == fire.weather and not camera_dirty:
 		_ambient_effects()
 		return
+	var fuel_changed := last_revision != fire.revision
 	last_revision = fire.revision
 	last_weather = fire.weather
 	camera_dirty = false
@@ -531,16 +533,17 @@ func _refresh(delta: float) -> void:
 	var strongest := 0.0
 	var luminous := Vector3(0, 0.14, 0)
 	for piece in fire.wood:
-		_refresh_fuel_piece(piece, false, alive, steam_sources)
+		_refresh_fuel_piece(piece, false, alive, steam_sources, fuel_changed)
 	for piece in fire.stored:
-		_refresh_fuel_piece(piece, true, alive, steam_sources)
+		_refresh_fuel_piece(piece, true, alive, steam_sources, fuel_changed)
 	for p in fire.thermal_sources():
 		var key := p.get_instance_id()
 		sources[key] = true
 		if p.kind < 0:
 			if not beds.has(key):
 				beds[key] = _mesh(stone if p.size < 0.09 else coal_cluster, Paint.style(Paint.Surface.CHARCOAL, Color.WHITE, true))
-			_update_bed(p, beds[key])
+			if fuel_changed:
+				_update_bed(p, beds[key])
 			_show_steam(p, steam_sources)
 		if p.flame > 0.20:
 			if not plumes.has(key):
@@ -558,13 +561,16 @@ func _refresh(delta: float) -> void:
 	_prune(beds, sources)
 	_prune(plumes, sources)
 	_prune(steam_views, steam_sources)
-	_update_ash()
+	if fuel_changed:
+		_update_ash()
+		geometry_changed.emit()
 	lamp.position = luminous
 	lamp_power = clampf(strongest * 1.15, 0.0, 1.94)
 	mood.ambient_light_energy = 0.50 if fire.weather == 3 else 0.58
 	_ambient_effects()
 
-func _refresh_fuel_piece(piece: Fire.Piece, is_stored: bool, alive: Dictionary, steam_sources: Dictionary) -> void:
+func _refresh_fuel_piece(piece: Fire.Piece, is_stored: bool, alive: Dictionary, steam_sources: Dictionary,
+		fuel_changed: bool) -> void:
 	if piece.pose == null:
 		return
 	var key := piece.get_instance_id()
@@ -576,12 +582,12 @@ func _refresh_fuel_piece(piece: Fire.Piece, is_stored: bool, alive: Dictionary, 
 			node.queue_free()
 		_create_log(piece)
 	var first: MeshInstance3D = logs[key][0]
-	if not is_stored:
+	if not is_stored and fuel_changed:
 		_update_log(piece, logs[key])
 		if first.has_meta("stored_sample"):
 			first.remove_meta("stored_sample")
 			first.remove_meta("stored_pose")
-	else:
+	elif fuel_changed:
 		var face_id := piece.id if piece.faces.is_empty() else piece.faces[0].id
 		var sample := [fire.storage_sample, piece.pose, piece.roll_travel, face_id]
 		if first.get_meta("stored_sample", []) != sample:
@@ -636,8 +642,12 @@ func _update_shelter() -> void:
 		daylight.light_energy = 0.68
 		return
 	var depth: float = -Fire.Shelter.DEPTHS[shelter.site]
-	if cave.position.z != depth:
-		cave.position.z = depth
+	# Compare the same vector precision used by Node3D. A double depth such
+	# as 0.22 differs from its float component on every otherwise idle frame.
+	var cave_position := cave.position
+	cave_position.z = depth
+	if cave.position != cave_position:
+		cave.position = cave_position
 		if cave.has_method("align_floor"):
 			cave.align_floor()
 		_update_camera()

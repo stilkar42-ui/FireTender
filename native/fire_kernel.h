@@ -4,6 +4,7 @@
 
 namespace fire {
 
+constexpr std::size_t max_network_nodes = 2048;
 // The bridge and GDScript pack rows in this order. All accumulator fields
 // use binary64. Dot products of Godot Vector2 values use binary32.
 enum NodeField {

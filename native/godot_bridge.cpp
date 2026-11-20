@@ -92,7 +92,7 @@ void call(void *userdata, GDExtensionClassInstancePtr, const GDExtensionConstVar
     } else if (operation == candidate_pairs) {
         const auto values_count = values.size();
         const auto nodes = values_count / 6;
-        if (nodes >= 2 && nodes <= 1024 && result.resize(nodes * (nodes - 1))) {
+        if (nodes >= 2 && nodes <= fire::max_network_nodes && result.resize(nodes * (nodes - 1))) {
             std::size_t actual = 0;
             if (!fire::candidate_pairs(read_at(values.storage, 0), values_count, write_at(result.storage, 0), actual)) {
                 actual = 0;
@@ -103,7 +103,7 @@ void call(void *userdata, GDExtensionClassInstancePtr, const GDExtensionConstVar
         PackedArray blockers(args[1]), pairs(args[2]);
         const auto length = values.size(), blocker_length = blockers.size(), pair_length = pairs.size();
         const auto nodes = length / fire::geometry_width;
-        if (nodes && nodes <= 1024 && blocker_length <= 1024 * fire::occluder_width &&
+        if (nodes && nodes <= fire::max_network_nodes && blocker_length <= fire::max_network_nodes * fire::occluder_width &&
                 pair_length <= nodes * (nodes - 1) && result.resize(1 + 2 * nodes + pair_length / 2 * fire::link_width)) {
             std::size_t actual = 0;
             if (!fire::build_network(read_at(values.storage, 0), length,
