@@ -6,8 +6,9 @@ const Chapter := preload("res://sim/red_hollow.gd")
 const Fire := Chapter.Fire
 const Work := Chapter.Family.Workshop
 const Mentor := preload("res://sim/mentor.gd")
-const VERSION := 4
+const VERSION := 5
 const MAX_BYTES := 24 * 1024 * 1024
+const MAX_STATE_BYTES := 128 * 1024 * 1024
 const FIRE_SKIP := ["wood", "stored", "coals", "sparks", "breaths", "falling", "cells", "shelter", "smoke_field",
 	"nodes", "links", "radiant_links", "fuel_stock", "network_geometry", "network_material",
 	"_links", "_radiant_links", "packed_topology", "packed_radiant_count",
@@ -27,7 +28,11 @@ static func write_slot(path: String, chapter: Chapter, mentor: Mentor, view_stat
 
 static func write_state(path: String, state: Dictionary) -> Error:
 	var bytes := var_to_bytes(state)
-	if bytes.is_empty() or bytes.size() > MAX_BYTES:
+	if bytes.is_empty() or bytes.size() > MAX_STATE_BYTES:
+		return ERR_INVALID_DATA
+	bytes = var_to_bytes({"container": "firetender-zstd", "size": bytes.size(),
+		"payload": bytes.compress(FileAccess.COMPRESSION_ZSTD)})
+	if bytes.size() > MAX_BYTES:
 		return ERR_INVALID_DATA
 	path = ProjectSettings.globalize_path(path)
 	var folder := DirAccess.make_dir_recursive_absolute(path.get_base_dir())
@@ -57,7 +62,16 @@ static func read_slot(path: String) -> Dictionary:
 	if _digest(bytes) != digest:
 		return {}
 	var state: Variant = bytes_to_var(bytes)
-	if not state is Dictionary or state.get("version", -1) not in [1, 2, 3, VERSION]:
+	if state is Dictionary and state.get("container") == "firetender-zstd":
+		var size: Variant = state.get("size")
+		var payload: Variant = state.get("payload")
+		if not size is int or size <= 0 or size > MAX_STATE_BYTES or not payload is PackedByteArray:
+			return {}
+		var unpacked: PackedByteArray = payload.decompress(size, FileAccess.COMPRESSION_ZSTD)
+		if unpacked.size() != size:
+			return {}
+		state = bytes_to_var(unpacked)
+	if not state is Dictionary or state.get("version", -1) not in [1, 2, 3, 4, VERSION]:
 		return {}
 	return state
 
@@ -310,8 +324,9 @@ static func _capture_fire(fire: Fire) -> Dictionary:
 		fields[group] = parts
 	if not fire.network_dirty:
 		fields.node_refs = fire.nodes.map(func(piece): return indices.get(piece, -1))
-		fields.links = _objects(fire.links)
-		fields.radiant_links = _objects(fire.radiant_links)
+		if fire.exchange_links.is_empty():
+			fire._pack_exchange_links()
+		fields.packed_links = fire.exchange_links.duplicate()
 		fields.sampled_network_material = fire.network_material.duplicate(true)
 	fields.breaths = _objects(fire.breaths)
 	fields.falling = _objects(fire.falling)
@@ -413,6 +428,8 @@ static func _restore_topology(fire: Fire, data: Dictionary, indices: Dictionary)
 		if not indices.has(id):
 			return false
 		fire.nodes.append(indices[id])
+	if data.has("packed_links"):
+		return data.packed_links is PackedFloat64Array and fire.restore_packed_links(data.packed_links)
 	for group: String in ["links", "radiant_links"]:
 		if not data.get(group) is Array:
 			return false

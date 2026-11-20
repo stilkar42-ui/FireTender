@@ -7,8 +7,7 @@ const Structure := preload("res://sim/structure.gd")
 const Feeding := preload("res://sim/feeding.gd")
 const Materials := preload("res://sim/wood_materials.gd")
 const Native := preload("res://sim/native_fire.gd")
-const MAX_WOOD := 28
-const MAX_FRAGMENTS := 6
+const MAX_WOOD := 128
 const GRAVITY := 9.81
 const LIMIT := Vector2(0.94, 0.87)
 const LEAVES := 14
@@ -1796,7 +1795,7 @@ func _prepare_network() -> void:
 	insulations.resize(nodes.size())
 	changes.resize(nodes.size())
 	ember_heat.resize(coals.size())
-	if Native.enabled and nodes.size() >= 32 and nodes.size() <= 1024 \
+	if Native.enabled and nodes.size() >= 32 and nodes.size() <= Native.MAX_NETWORK_NODES \
 			and ClassDB.class_has_method(Native.KERNEL, &"build_network") and _build_network_native():
 		return
 	_index_network_occluders()
@@ -2029,7 +2028,7 @@ func _candidate_geometry() -> PackedFloat64Array:
 	return geometry
 
 func _network_pair_rows() -> Array[PackedInt32Array]:
-	if Native.enabled and nodes.size() >= 64 and nodes.size() <= 1024:
+	if Native.enabled and nodes.size() >= 64 and nodes.size() <= Native.MAX_NETWORK_NODES:
 		var pairs: PackedFloat64Array = ClassDB.class_call_static(Native.KERNEL, &"candidate_pairs", _candidate_geometry())
 		if not pairs.is_empty():
 			var rows: Array[PackedInt32Array] = []
@@ -2100,6 +2099,10 @@ func _build_network_native() -> bool:
 	crowding = built.slice(1, 1 + nodes.size())
 	starter_ventilation = built.slice(1 + nodes.size(), link_start)
 	exchange_links = built.slice(link_start)
+	_index_exchange_links()
+	return true
+
+func _index_exchange_links() -> void:
 	exchange_fibre.clear()
 	exchange_bed.clear()
 	for index in range(0, exchange_links.size(), EXCHANGE_LINK_WIDTH):
@@ -2109,6 +2112,34 @@ func _build_network_native() -> bool:
 			exchange_fibre.append(_unpack_link(index))
 		if a.kind < 0 and b.kind < 0:
 			exchange_bed.append(_unpack_link(index))
+
+func restore_packed_links(packed: PackedFloat64Array) -> bool:
+	if packed.size() % EXCHANGE_LINK_WIDTH != 0:
+		return false
+	var previous_a := -1
+	var previous_b := -1
+	for offset in range(0, packed.size(), EXCHANGE_LINK_WIDTH):
+		for field in EXCHANGE_LINK_WIDTH:
+			if not is_finite(packed[offset + field]):
+				return false
+		var a := int(packed[offset])
+		var b := int(packed[offset + 1])
+		var coal := int(packed[offset + 8])
+		if packed[offset] != a or packed[offset + 1] != b or packed[offset + 8] != coal \
+				or a < 0 or b <= a or b >= nodes.size() or coal not in [-1, a, b] \
+				or a < previous_a or (a == previous_a and b <= previous_b):
+			return false
+		previous_a = a
+		previous_b = b
+	exchange_links = packed.duplicate()
+	_links.clear()
+	_radiant_links.clear()
+	packed_topology = true
+	packed_radiant_count = 0
+	for offset in range(0, packed.size(), EXCHANGE_LINK_WIDTH):
+		if packed[offset + 12] > 0.0 or packed[offset + 13] > 0.0:
+			packed_radiant_count += 1
+	_index_exchange_links()
 	return true
 
 func thermal_link_count() -> int:
@@ -2927,7 +2958,9 @@ func _worn_radius(section: Piece, face: Piece, solid: float) -> float:
 	return section.original_radius * clampf(ceilf(ratio * 12.0) / 12.0, 0.16, 1.0)
 
 func _fracture_weak_section(piece: Piece) -> bool:
-	if piece.sections.size() < 2 or piece.airborne or wood.size() >= MAX_WOOD + MAX_FRAGMENTS:
+	# Splitting partitions existing sections. The number of surviving bodies
+	# is bounded by those sections, including in a player-built bonfire.
+	if piece.sections.size() < 2 or piece.airborne:
 		return false
 	if piece.pose == null:
 		return false

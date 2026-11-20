@@ -2,6 +2,7 @@ extends RefCounted
 ## Optional Windows numerical backend. The story and saves own all physical state.
 
 const KERNEL := &"FiretenderKernel"
+const MAX_NETWORK_NODES := 2048
 static var enabled := _available()
 
 static func _available() -> bool:
